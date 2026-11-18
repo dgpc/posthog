@@ -27,11 +27,11 @@ from products.experiments.backend.models.experiment import (
     ExperimentMetricsRecalculation,
 )
 from products.experiments.backend.presentation.views import EnterpriseExperimentsViewSet
-from products.experiments.backend.recalculation import (
+from products.experiments.backend.recalculation.admission import (
     RECALCULATION_AGE_LIMIT_FEATURE_FLAG,
     RECALCULATION_WINDOW_TOO_LONG_MESSAGE,
-    RUN_ENTRY_HIDDEN_MESSAGE,
 )
+from products.experiments.backend.recalculation.payloads import RUN_ENTRY_HIDDEN_MESSAGE
 from products.experiments.backend.temporal.models import ExperimentMetricsRecalculationWorkflowInputs
 from products.experiments.backend.temporal.recalculation.logic import (
     _calculate_experiment_metric_for_recalculation_sync,
