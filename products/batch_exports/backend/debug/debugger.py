@@ -31,6 +31,7 @@ from products.batch_exports.backend.service import (
     BaseBatchExportInputs,
     BatchExportField,
     DatabricksBatchExportInputs,
+    coerce_config_to_declared_types,
     get_batch_export_model,
 )
 from products.batch_exports.backend.temporal.batch_exports import with_inserted_at_field
@@ -458,7 +459,13 @@ class BatchExportsDebugger:
                 parameters["include_events"] = []
 
             fields = with_inserted_at_field(default_fields_for_destination(batch_export_run.parent.destination.type))
-            if batch_exports_read_new_events_table(team_id):
+            if batch_exports_read_new_events_table(
+                team_id,
+                export_opted_in=coerce_config_to_declared_types(
+                    batch_export_run.parent.destination.type, batch_export_run.parent.destination.config
+                ).get("use_new_events_schema")
+                is True,
+            ):
                 filters_str = ""
                 if filters:
                     filters_str, extra_query_parameters = compose_filters_clause(
