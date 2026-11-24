@@ -3291,7 +3291,6 @@ export const runStreamLogic = kea<runStreamLogicType>([
         /** Records the agent's `/clear` capability, read off each `_posthog/run_started` frame. */
         setConversationClearSupported: (supported: boolean) => ({ supported }),
         markTurnComplete: (isReplay: boolean = false) => ({ isReplay }),
-        /** Reads the run's billed sandbox compute, which the agent's own usage frames do not report. */
         loadAiCreditsComputeCost: true,
         setAiCreditsComputeCostUsd: (costUsd: number) => ({ costUsd }),
         setTurnSuggestionLedger: (ledger: TurnSuggestionLedger) => ({ ledger }),
@@ -3783,7 +3782,6 @@ export const runStreamLogic = kea<runStreamLogicType>([
                 reset: () => null,
             },
         ],
-        // The run's compute that PostHog AI credits bill. The footer adds it to the model cost the run reports.
         aiCreditsComputeCostUsd: [
             0,
             {
@@ -5769,7 +5767,6 @@ export const runStreamLogic = kea<runStreamLogicType>([
                 if (!taskId || !runId || projectId === null) {
                     return
                 }
-                // A burst of turn completions, such as a reconnect replay, makes one request.
                 await breakpoint(100)
                 let usage: TaskRunComputeUsageResponseApi
                 try {
