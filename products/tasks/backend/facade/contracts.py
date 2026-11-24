@@ -1140,6 +1140,13 @@ class TaskRunStateMetricsDTO:
     terminal_recently: list[TaskRunGaugeRow] = Field(default_factory=list)
 
 
+class ComputeBillingMeter(LabeledStrEnum):
+    """The credits meter that bills a task's sandbox compute. The task's origin decides it."""
+
+    POSTHOG_CODE = "posthog_code", "PostHog Desktop credits"
+    AI_CREDITS = "ai_credits", "PostHog AI credits"
+
+
 class ComputeQuotaDenialReason(StrEnum):
     """Why a compute request was refused. The value is the denial code the API returns."""
 
