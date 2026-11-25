@@ -5,6 +5,7 @@ import {
     putCallbackRedirectUri,
     putPendingCallback,
     putRegionSelection,
+    regionalClientIdFor,
 } from '@/lib/kv'
 import { type ValidationError, errorResponse } from '@/lib/validation'
 
@@ -81,16 +82,8 @@ async function redirectToRegionalAuthorize(url: URL, region: Region, kv: KVNames
     const clientId = url.searchParams.get('client_id')
     const state = url.searchParams.get('state')
     const originalRedirectUri = url.searchParams.get('redirect_uri')
-    let regionalClientId = clientId
-    let mapping: ClientMapping | null = null
-
-    // Translate proxy client_id to regional client_id if we have a mapping
-    if (clientId) {
-        mapping = await getClientMapping(kv, clientId)
-        if (mapping) {
-            regionalClientId = region === 'eu' ? mapping.eu_client_id : mapping.us_client_id
-        }
-    }
+    const mapping = clientId ? await getClientMapping(kv, clientId) : null
+    const regionalClientId = mapping ? regionalClientIdFor(mapping, region) : clientId
 
     const redirectUriError = validateRegisteredRedirectUri(originalRedirectUri, mapping)
     if (redirectUriError) {
@@ -103,17 +96,17 @@ async function redirectToRegionalAuthorize(url: URL, region: Region, kv: KVNames
     }
 
     // Only proxy-registered clients have the proxy callback in their registered redirect_uris.
-    const callbackUrl =
-        mapping?.redirect_uris && regionalClientId ? clientCallbackUrl(url.origin, regionalClientId) : null
+    const callbackUrl = mapping?.redirect_uris
+        ? clientCallbackUrl(url.origin, regionalClientIdFor(mapping, region))
+        : null
     let nonce: string | null = null
-    if (callbackUrl && regionalClientId && originalRedirectUri) {
+    if (callbackUrl && originalRedirectUri) {
         // A proxy nonce keys the record so knowing the client's state cannot overwrite it.
         nonce = crypto.randomUUID()
         kvWrites.push(
-            putPendingCallback(kv, nonce, {
+            putPendingCallback(kv, new URL(callbackUrl).pathname, nonce, {
                 redirect_uri: originalRedirectUri,
                 state: state ?? null,
-                regional_client_id: regionalClientId,
             })
         )
         if (clientId) {

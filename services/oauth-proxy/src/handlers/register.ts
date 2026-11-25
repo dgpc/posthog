@@ -1,4 +1,4 @@
-import { CALLBACK_PATH, POSTHOG_EU_BASE_URL, POSTHOG_US_BASE_URL } from '@/lib/constants'
+import { POSTHOG_EU_BASE_URL, POSTHOG_US_BASE_URL, proxyOrigin, sharedCallbackUrl } from '@/lib/constants'
 import type { ClientMapping } from '@/lib/kv'
 import { putClientMapping } from '@/lib/kv'
 
@@ -16,9 +16,7 @@ export async function handleRegister(request: Request, kv: KVNamespace): Promise
     const headers = new Headers(request.headers)
     headers.delete('host')
 
-    // With the shared proxy callback registered, a regional server also accepts the per-client
-    // callback path under it (see clientCallbackUrl), which the authorize step sends instead.
-    const proxyCallbackUrl = `${new URL(request.url).origin}${CALLBACK_PATH}`
+    const proxyCallbackUrl = sharedCallbackUrl(proxyOrigin(request))
     let originalRedirectUris: string[] | undefined
     let registrationBody = body
     try {

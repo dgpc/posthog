@@ -35,7 +35,7 @@ Trailing slashes are optional; paths are normalized before matching.
    `/oauth/register` forwards the registration to both regions in parallel and stores a `client:<id>` mapping in KV linking the US and EU `client_id` and `client_secret` pairs.
    The US `client_id` is handed back as the proxy `client_id`.
    The proxy's own `/oauth/callback/` is appended to the submitted `redirect_uris`.
-   A regional server then also accepts `/oauth/callback/<client_id>/` for that application, with its own regional `client_id` and no other (`OAUTH_PROXY_CALLBACK_URLS` in Django).
+   A regional server then also accepts `/oauth/callback/<client_id>/` for that application, with its own regional `client_id` and no other (see `OAuthApplication.redirect_uri_allowed` in Django).
 2. **Authorize.**
    `/oauth/authorize` resolves the region, by cookie when it can and by asking when it cannot.
    Each region sets `ph_authenticated_us` or `ph_authenticated_eu` on the shared `posthog.com` domain while a session is live there, and clears it on logout.
@@ -47,13 +47,13 @@ Trailing slashes are optional; paths are normalized before matching.
 
    Those two cookies are `HttpOnly` and `SameSite=Lax`. Nothing in the browser reads them, because the worker takes them from the request Cookie header, so `HttpOnly` keeps a script on any sibling `posthog.com` origin from reading or overwriting them. A browser withholds a `Strict` cookie on the cross-site top-level navigation an OAuth client arrives by, so `ph_current_instance` and the other `Strict` cookies never reach this worker. Only page JavaScript can read them.
    The worker stores the region choice in KV under the `client_id`, swaps in the regional `client_id`, replaces `redirect_uri` with the proxy callback for that regional `client_id`, and redirects to the region.
-   For clients with a stored `redirect_uris` list, it also generates a nonce, stores the client's original `redirect_uri`, its `state` and the regional `client_id` under it, and sends the regional server that nonce as `state` instead of the client's own.
+   For clients with a stored `redirect_uris` list, it also generates a nonce, stores the client's original `redirect_uri` and `state` under that nonce and the client's callback path, and sends the regional server that nonce as `state` instead of the client's own.
 
 3. **Callback.**
    The regional server sends the user to `/oauth/callback/<regional_client_id>/` with the nonce from step 2 as `state`.
-   The worker looks up the matching record and refuses the callback when the path names a different regional client, because the code was then issued to another client.
-   The shared `/oauth/callback/` names no client, so a callback there is always refused.
-   Otherwise the worker deletes the record, then forwards every query param to the client's original `redirect_uri`, restoring the client's own `state`.
+   The worker looks up the record under that path and nonce, so a code delivered on another client's path finds nothing and is refused.
+   The shared `/oauth/callback/` is not routed.
+   The worker deletes the record, then forwards every query param to the client's original `redirect_uri`, restoring the client's own `state`.
    The client never sees a regional URL, so its token request comes back through the proxy.
 4. **Token.**
    `/oauth/token` looks up the region by `client_id`.
@@ -116,7 +116,7 @@ Without `OIDC_SIGNING_KEY` the worker serves the regional ID token unchanged and
 | `client:<proxy_id>`         | none   | US and EU `client_id`s, secrets, and registered `redirect_uris`                             |
 | `region:<sha256>`           | 1 hour | `us` or `eu`, stored under `client_id`                                                      |
 | `callback:<sha256>`         | 1 hour | The client's original `redirect_uri`, stored under `client_id`                              |
-| `pending_callback:<sha256>` | 1 hour | The client's original `redirect_uri`, `state` and regional `client_id`, under a proxy nonce |
+| `pending_callback:<sha256>` | 1 hour | The client's original `redirect_uri` and `state`, under its callback path and a proxy nonce |
 
 Key material is SHA-256 hashed because `state` and the nonce are opaque and can exceed Cloudflare's 512 byte key limit.
 `pending_callback:` records are deleted once `/oauth/callback` reads them, so a nonce is single-use.

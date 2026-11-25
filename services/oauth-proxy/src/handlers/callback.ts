@@ -1,4 +1,4 @@
-import { callbackPathClientId } from '@/lib/constants'
+import { isClientCallbackPath } from '@/lib/constants'
 import { deletePendingCallback, getPendingCallback } from '@/lib/kv'
 
 /**
@@ -10,28 +10,23 @@ import { deletePendingCallback, getPendingCallback } from '@/lib/kv'
  */
 export async function handleCallback(request: Request, kv: KVNamespace): Promise<Response> {
     const url = new URL(request.url)
-    const state = url.searchParams.get('state')
+    if (!isClientCallbackPath(url.pathname)) {
+        return new Response('Unknown callback path', { status: 400 })
+    }
 
+    const state = url.searchParams.get('state')
     if (!state) {
         return new Response('Missing state parameter', { status: 400 })
     }
 
-    const record = await getPendingCallback(kv, state)
+    const record = await getPendingCallback(kv, url.pathname, state)
     if (!record) {
         return new Response('State expired or invalid', { status: 400 })
     }
 
-    // A regional server delivers a client's codes only to the callback path that names that client,
-    // so a mismatch means this code belongs to another client than the one that started the flow.
-    const routeClientId = callbackPathClientId(url.pathname)
-    if (!record.regional_client_id || routeClientId !== encodeURIComponent(record.regional_client_id)) {
-        console.warn(JSON.stringify({ handler: 'callback', error: 'callback_client_mismatch' }))
-        return new Response('Callback does not match the client that started this flow', { status: 400 })
-    }
-
     // A transient KV failure here should not turn an already-verified callback into a 500.
     try {
-        await deletePendingCallback(kv, state)
+        await deletePendingCallback(kv, url.pathname, state)
     } catch {
         console.warn(JSON.stringify({ handler: 'callback', error: 'pending_callback_delete_failed' }))
     }

@@ -1,11 +1,20 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { handleAuthorize } from '@/handlers/authorize'
-import { hashKey } from '@/lib/kv'
+import { getPendingCallback, hashKey } from '@/lib/kv'
 
-import { createMockKV, mockKVGet } from './helpers'
+import { createInMemoryKV, createMockKV, mockKVGet } from './helpers'
 
 const mockKV = createMockKV()
+
+/** A KV that holds what the handler wrote to the mock, so the test reads it back through the kv module. */
+function kvWith(putCalls: unknown[][]): KVNamespace {
+    const kv = createInMemoryKV()
+    for (const [key, value] of putCalls) {
+        void kv.put(key as string, value as string)
+    }
+    return kv
+}
 
 beforeEach(() => {
     vi.clearAllMocks()
@@ -165,7 +174,6 @@ describe('handleAuthorize', () => {
         const putCalls = vi.mocked(mockKV.put).mock.calls
 
         const clientHash = await hashKey('us_id')
-        const nonceHash = await hashKey(nonce)
 
         const regionByClient = putCalls.find(([key]) => (key as string) === `region:${clientHash}`)
         expect(regionByClient).toBeTruthy()
@@ -175,12 +183,9 @@ describe('handleAuthorize', () => {
         expect(callbackByClient).toBeTruthy()
         expect(callbackByClient![1]).toBe('http://localhost:3000/callback')
 
-        const pendingByNonce = putCalls.find(([key]) => (key as string) === `pending_callback:${nonceHash}`)
-        expect(pendingByNonce).toBeTruthy()
-        expect(JSON.parse(pendingByNonce![1] as string)).toEqual({
+        expect(await getPendingCallback(kvWith(putCalls), '/oauth/callback/eu_id/', nonce)).toEqual({
             redirect_uri: 'http://localhost:3000/callback',
             state: 'abc123',
-            regional_client_id: 'eu_id',
         })
 
         const stateHash = await hashKey('abc123')
@@ -222,10 +227,8 @@ describe('handleAuthorize', () => {
             expect((key as string).length).toBeLessThanOrEqual(512)
         }
 
-        const nonceHash = await hashKey(nonce)
-        const pendingCallback = putCalls.find(([key]) => (key as string) === `pending_callback:${nonceHash}`)
-        expect(pendingCallback).toBeTruthy()
-        expect((JSON.parse(pendingCallback![1] as string) as { state: string }).state).toBe(longState)
+        const pendingCallback = await getPendingCallback(kvWith(putCalls), '/oauth/callback/us_id/', nonce)
+        expect(pendingCallback?.state).toBe(longState)
     })
 
     it('passes redirect_uri through without interception for legacy clients (no stored redirect_uris)', async () => {

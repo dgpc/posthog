@@ -27,21 +27,16 @@ export function proxyOrigin(request: Request): string {
 
 export const CALLBACK_PATH = '/oauth/callback/'
 
-/**
- * The regional server accepts this path only for the application whose client_id it names
- * (`OAUTH_PROXY_CALLBACK_URLS` in Django), so the path tells the callback which client a code was issued to.
- */
-export function clientCallbackUrl(origin: string, regionalClientId: string): string {
-    return `${origin}${CALLBACK_PATH}${encodeURIComponent(regionalClientId)}/`
+/** Registered at DCR. A region accepts each client's own path under it, see OAuthApplication.redirect_uri_allowed. */
+export function sharedCallbackUrl(origin: string): string {
+    return `${origin}${CALLBACK_PATH}`
 }
 
-export function callbackPathClientId(pathname: string): string | null {
-    if (!pathname.startsWith(CALLBACK_PATH)) {
-        return null
-    }
-    const [segment, ...rest] = pathname.slice(CALLBACK_PATH.length).split('/')
-    if (!segment || rest.some((part) => part !== '')) {
-        return null
-    }
-    return segment
+export function clientCallbackUrl(origin: string, regionalClientId: string): string {
+    return `${sharedCallbackUrl(origin)}${encodeURIComponent(regionalClientId)}/`
+}
+
+/** Whether a path has the shape `clientCallbackUrl` builds: one segment under the shared callback. */
+export function isClientCallbackPath(pathname: string): boolean {
+    return pathname.startsWith(CALLBACK_PATH) && /^[^/]+\/$/.test(pathname.slice(CALLBACK_PATH.length))
 }

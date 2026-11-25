@@ -79,7 +79,7 @@ const routes: Route[] = [
         handler: handleAuthorize,
     },
     {
-        paths: ['/oauth/callback'],
+        paths: [],
         pathPrefixes: [CALLBACK_PATH],
         handler: handleCallback,
     },
