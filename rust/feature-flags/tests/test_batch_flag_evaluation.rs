@@ -564,6 +564,18 @@ async fn test_team_null_counts_as_not_set_selects_live_and_batch_semantics() -> 
         .await?;
     assert_eq!(matched_uuids(&batch_on), vec![set_person_uuid]);
 
+    let unpinned = send_batch_request(
+        &server,
+        Some(INTERNAL_TOKEN),
+        &batch_body(team.id, "plan-is-set-flag", 0),
+    )
+    .await;
+    assert_eq!(unpinned.status(), StatusCode::OK);
+    assert_eq!(
+        matched_uuids(&unpinned.json::<Value>().await?),
+        vec![set_person_uuid]
+    );
+
     Ok(())
 }
 

@@ -46,7 +46,6 @@ pub fn lookup_key_for(filter: &PropertyFilter) -> Cow<'_, str> {
 pub enum FlagMatchingError {
     ValidationError(String),
     MissingProperty(String),
-    InconclusiveOperatorMatch,
     InvalidRegexPattern,
 }
 

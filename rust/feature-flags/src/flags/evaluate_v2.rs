@@ -402,8 +402,7 @@ fn rule_targets(
             matching,
         )
         .map_err(|error| match error {
-            FlagMatchingError::MissingProperty(_)
-            | FlagMatchingError::InconclusiveOperatorMatch => EvaluationError::MissingContext,
+            FlagMatchingError::MissingProperty(_) => EvaluationError::MissingContext,
             FlagMatchingError::ValidationError(_) => EvaluationError::InvalidProperty,
             FlagMatchingError::InvalidRegexPattern => EvaluationError::InvalidRegex,
         })?;
