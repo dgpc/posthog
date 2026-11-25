@@ -28,6 +28,10 @@ from products.slack_app.backend.facade.types import (
     SlackWorkspaceSettings,
     WorkspaceSettingsError,
 )
+from products.slack_app.backend.feature_flags import (
+    is_slack_app_byos_enabled,
+    is_slack_app_chatgpt_apps_setting_enabled,
+)
 from products.slack_app.backend.logic.feature_tips.state import get_state, set_tips_enabled
 from products.slack_app.backend.logic.workspace_setup import can_change_workspace_settings
 from products.slack_app.backend.models import (
@@ -48,12 +52,14 @@ from products.slack_app.backend.services.reaction_settings import (
 )
 from products.slack_app.backend.services.slack_settings import (
     resolve_auto_model_choice,
+    resolve_chatgpt_apps_enabled,
     resolve_external_channels_enabled,
     resolve_personal_default_integration_id,
     resolve_thread_join_mode,
     resolve_untagged_followup_mode,
     resolve_untagged_question_mode,
     set_auto_model_choice,
+    set_chatgpt_apps_enabled,
     set_external_channels_enabled,
     set_personal_default_integration,
     set_thread_join_mode,
@@ -118,6 +124,22 @@ def _personal_settings(
         feature_tips_enabled=get_state(slack_workspace_id, slack_user_id).opted_out_at is None
         if slack_user_id
         else True,
+        chatgpt_apps_enabled=(
+            resolve_chatgpt_apps_enabled(slack_workspace_id, slack_user_id)
+            if slack_user_id and _chatgpt_plan_runs_slack_tasks(integration, user)
+            else None
+        ),
+    )
+
+
+def _chatgpt_plan_runs_slack_tasks(integration: WorkspaceIntegration, user: User) -> bool:
+    from products.tasks.backend.facade import api as tasks_facade  # noqa: PLC0415 — keeps tasks off this import path
+
+    # The plan check reads one row, so it runs before the two flag calls.
+    return (
+        tasks_facade.can_bill_plan_unattended(user, "codex")
+        and is_slack_app_chatgpt_apps_setting_enabled(integration, user.distinct_id)
+        and is_slack_app_byos_enabled(integration, user.distinct_id)
     )
 
 
@@ -207,6 +229,11 @@ def update_personal_settings(
         set_tips_enabled(slack_workspace_id, slack_user_id, change.feature_tips_enabled)
         _capture_change(
             integration, user, scope="personal", setting="feature_tips", enabled=change.feature_tips_enabled
+        )
+    if change.chatgpt_apps_enabled is not UNSET:
+        set_chatgpt_apps_enabled(slack_workspace_id, slack_user_id, change.chatgpt_apps_enabled)
+        _capture_change(
+            integration, user, scope="personal", setting="chatgpt_apps", enabled=change.chatgpt_apps_enabled
         )
 
 
