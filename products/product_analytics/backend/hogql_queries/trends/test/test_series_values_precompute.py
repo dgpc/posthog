@@ -1,4 +1,5 @@
 import json
+from datetime import datetime
 from typing import Any
 
 import time_machine
@@ -29,7 +30,7 @@ from posthog.schema import (
 from posthog.clickhouse.client import sync_execute
 
 from products.analytics_platform.backend.models.preaggregation_job import PreaggregationJob
-from products.product_analytics.backend.facade.contracts import SeriesValuesUnavailable
+from products.product_analytics.backend.facade.contracts import ClosedSeriesValues, SeriesValuesUnavailable
 from products.product_analytics.backend.hogql_queries.trends.series_values_precompute import (
     closed_series_values,
     execute_precomputed_trends,
@@ -205,7 +206,6 @@ class TestSeriesValuesPrecompute(ClickhouseTestMixin, APIBaseTest):
 
     @parameterized.expand(
         [
-            ("series_count", {"series": [EventsNode(event="a"), EventsNode(event="b")]}, None),
             ("actions_node", {"series": [ActionsNode(id=1)]}, None),
             (
                 "data_warehouse_node",
@@ -261,6 +261,51 @@ class TestSeriesValuesPrecompute(ClickhouseTestMixin, APIBaseTest):
         closed = closed_series_values(TrendsQueryRunner(team=self.team, query=_query(**overrides)), run_inserts=True)
 
         assert closed == SeriesValuesUnavailable(reason=reason)
+        assert not PreaggregationJob.objects.filter(team_id=self.team.pk).exists()
+
+    @parameterized.expand([("second_series", 1), ("third_series", 2)])
+    @time_machine.travel(_NOW, tick=False)
+    def test_a_series_of_a_multi_series_query_matches_live(self, _name: str, series_index: int) -> None:
+        self._seed()
+        query = _query(
+            series=[
+                EventsNode(event="signed_up", math="dau"),
+                EventsNode(event="signed_up", math="total", properties=[_PRO]),
+                EventsNode(event="other", math="total"),
+            ]
+        )
+        [live_series] = [
+            row
+            for row in TrendsQueryRunner(team=self.team, query=query).calculate().results
+            if row["order"] == series_index
+        ]
+
+        closed = closed_series_values(
+            TrendsQueryRunner(team=self.team, query=query), series_index=series_index, run_inserts=True
+        )
+
+        assert isinstance(closed, ClosedSeriesValues)
+        live_by_day = {
+            datetime.fromisoformat(day): value for day, value in zip(live_series["days"], live_series["data"])
+        }
+        assert closed.values == {day: live_by_day[day] for day in closed.values}
+        assert sum(closed.values.values()) > 0
+
+    @time_machine.travel(_NOW, tick=False)
+    def test_refuses_a_series_the_query_does_not_have(self) -> None:
+        closed = closed_series_values(
+            TrendsQueryRunner(team=self.team, query=_query()), series_index=1, run_inserts=True
+        )
+
+        assert closed == SeriesValuesUnavailable(reason="series_count")
+
+    @time_machine.travel(_NOW, tick=False)
+    def test_insight_path_leaves_multi_series_queries_to_the_live_runner(self) -> None:
+        query = _query(series=[EventsNode(event="signed_up"), EventsNode(event="other")])
+
+        result = execute_precomputed_trends(TrendsQueryRunner(team=self.team, query=query), run_inserts=True)
+
+        assert result is None
         assert not PreaggregationJob.objects.filter(team_id=self.team.pk).exists()
 
     @time_machine.travel(_NOW, tick=False)

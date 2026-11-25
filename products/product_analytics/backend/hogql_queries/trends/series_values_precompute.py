@@ -91,17 +91,15 @@ def _interval(runner: TrendsQueryRunner) -> str:
     return (runner.query.interval or IntervalType.DAY).value
 
 
-def _properties(runner: TrendsQueryRunner) -> list[Any]:
-    series = runner.query.series[0]
-    assert isinstance(series, EventsNode)
+def _properties(runner: TrendsQueryRunner, series: EventsNode) -> list[Any]:
     return [*(runner.query.properties or []), *(series.properties or [])]
 
 
-def _shape_refusal(runner: TrendsQueryRunner) -> str | None:
+def _shape_refusal(runner: TrendsQueryRunner, series_index: int) -> str | None:
     query = runner.query
-    if len(query.series) != 1:
+    if not 0 <= series_index < len(query.series):
         return "series_count"
-    series = query.series[0]
+    series = query.series[series_index]
     if isinstance(series, ActionsNode):
         return "actions_node"
     if isinstance(series, DataWarehouseNode):
@@ -145,7 +143,7 @@ def _shape_refusal(runner: TrendsQueryRunner) -> str | None:
         return "days_of_week"
     if isinstance(query.properties, PropertyGroupFilter):
         return "property_group"
-    if any(get_property_type(prop) != "event" for prop in _properties(runner)):
+    if any(get_property_type(prop) != "event" for prop in _properties(runner, series)):
         return "property_type"
     return None
 
@@ -181,15 +179,14 @@ def _live_boundary(buckets: list[datetime], today_start_utc: datetime) -> dateti
 
 def _ensure(
     runner: TrendsQueryRunner,
+    series: EventsNode,
     *,
     start: datetime,
     end: datetime,
     run_inserts: bool,
     wait_timeout_seconds: float | None = None,
 ) -> LazyComputationResult:
-    series = runner.query.series[0]
-    assert isinstance(series, EventsNode)
-    properties = _properties(runner)
+    properties = _properties(runner, series)
     return ensure_precomputed(
         team=runner.team,
         insert_query=INSERT_QUERY_TEMPLATE,
@@ -291,9 +288,13 @@ def _series_dict(runner: TrendsQueryRunner, values: dict[datetime, int]) -> dict
 
 
 def closed_series_values(
-    runner: TrendsQueryRunner, *, run_inserts: bool, wait_timeout_seconds: float | None = None
+    runner: TrendsQueryRunner,
+    *,
+    series_index: int = 0,
+    run_inserts: bool,
+    wait_timeout_seconds: float | None = None,
 ) -> ClosedSeriesValues | SeriesValuesUnavailable:
-    reason = _shape_refusal(runner) or _team_refusal(runner)
+    reason = _shape_refusal(runner, series_index) or _team_refusal(runner)
     buckets = runner.query_date_range.all_values()
     date_to = runner.query_date_range.date_to()
     if reason is None and _interval(runner) == "hour" and _crosses_dst(buckets):
@@ -324,8 +325,15 @@ def closed_series_values(
     if (range_end - range_start).days > MAX_RANGE_DAYS:
         return SeriesValuesUnavailable(reason="date_range_too_long")
 
+    series = runner.query.series[series_index]
+    assert isinstance(series, EventsNode)
     result = _ensure(
-        runner, start=range_start, end=range_end, run_inserts=run_inserts, wait_timeout_seconds=wait_timeout_seconds
+        runner,
+        series,
+        start=range_start,
+        end=range_end,
+        run_inserts=run_inserts,
+        wait_timeout_seconds=wait_timeout_seconds,
     )
     if not result.ready or not result.job_ids:
         return SeriesValuesUnavailable(reason="not_ready")
@@ -343,6 +351,8 @@ def closed_series_values(
 
 def execute_precomputed_trends(runner: TrendsQueryRunner, *, run_inserts: bool) -> list[dict[str, Any]] | None:
     try:
+        if len(runner.query.series) != 1:
+            return None
         closed = closed_series_values(runner, run_inserts=run_inserts)
         if isinstance(closed, SeriesValuesUnavailable):
             return None
