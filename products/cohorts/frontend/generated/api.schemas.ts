@@ -381,7 +381,7 @@ export const CohortRealtimeUnavailableReasonEnumApi = {
 } as const
 
 export interface CohortRealtimeReadinessApi {
-    /** Whether feature flags can target this cohort now. `ready`: they can, and they see membership changes within about a minute. `building` / `rebuilding`: PostHog is preparing the cohort from past events, and flags cannot target it yet. `needs_attention`: the cohort qualifies but nothing is preparing it. `off`: the cohort qualifies and realtime is off for it, so feature flags cannot target it until it is turned on. `daily`: the cohort can't be realtime, so its membership only comes from the once-a-day calculation. See `reason`. `person_properties`: it matches on person properties, which flags read directly, so they can always target it. `static`: it is a fixed list of people.
+    /** Whether feature flags can target this cohort now. `ready`: they can, and they see membership changes within about a minute. `building` / `rebuilding`: PostHog is preparing the cohort from past events, and flags cannot target it yet. `needs_attention`: the cohort qualifies but nothing is preparing it. `off`: the cohort qualifies and real-time is off for it, so feature flags cannot target it until it is turned on. `daily`: the cohort can't be real-time, so its membership only comes from the once-a-day calculation. See `reason`. `person_properties`: it matches on person properties, which flags read directly, so they can always target it. `static`: it is a fixed list of people.
      *
      * * `static` - Static
      * * `person_properties` - Person properties
@@ -399,7 +399,7 @@ export interface CohortRealtimeReadinessApi {
     ready_at: string | null
     /** The build preparing the cohort. Null unless the state is `building` or `rebuilding`. */
     build: CohortHistoryBuildApi | null
-    /** Why feature flags can't target the cohort. On a `daily` cohort, the first of these that keeps it off realtime: `unsupported_criteria`, one of its criteria can't be matched in realtime, such as a sequence of events or a lifecycle criterion. `action_criteria`, one of its criteria matches on an action. `includes_non_realtime_cohort`, it includes a cohort that was not realtime when it was last saved. `history_over_limit`, its criteria look back further than realtime cohorts can. `members_over_limit`, it matches more people than a realtime cohort can hold. `test_account_filter`, it filters out internal and test users. On an `off` cohort, `history_over_limit`: its criteria look back further than the project's plan allows, so it can't be turned on. On a `needs_attention` cohort, `too_large_to_build`: the events in its criteria happen too often for PostHog to prepare it automatically. Null in every other case, including a `daily` cohort whose stored criteria don't show why.
+    /** Why feature flags can't target the cohort. On a `daily` cohort, the first of these that keeps it off real-time: `unsupported_criteria`, one of its criteria can't be matched in real time, such as a sequence of events or a lifecycle criterion. `action_criteria`, one of its criteria matches on an action. `includes_non_realtime_cohort`, it includes a cohort that was not real-time when it was last saved. `history_over_limit`, its criteria look back further than real-time cohorts can. `members_over_limit`, it matches more people than a real-time cohort can hold. `test_account_filter`, it filters out internal and test users. On an `off` cohort, `history_over_limit`: its criteria look back further than the project's plan allows, so it can't be turned on. On a `needs_attention` cohort, `too_large_to_build`: the events in its criteria happen too often for PostHog to prepare it automatically. Null in every other case, including a `daily` cohort whose stored criteria don't show why.
      *
      * * `history_over_limit` - History over limit
      * * `too_large_to_build` - Too large to build
@@ -410,7 +410,7 @@ export interface CohortRealtimeReadinessApi {
      * * `test_account_filter` - Test account filter */
     reason: CohortRealtimeUnavailableReasonEnumApi | null
     /**
-     * The most days realtime cohort criteria can look back on the project's plan. Null unless the reason is `history_over_limit`.
+     * The most days real-time cohort criteria can look back on the project's plan. Null unless the reason is `history_over_limit`.
      * @nullable
      */
     history_limit_days: number | null
@@ -474,9 +474,9 @@ export interface CohortApi {
     cohort_type?: CohortTypeEnumApi | BlankEnumApi | null
     /** Flags describing which kinds of conditions the cohort's filters contain. Null when the cohort has no filters to classify. */
     readonly condition_type: CohortConditionTypeFlagsApi | null
-    /** Whether feature flags can target this cohort, and the progress of the build that gets it there. Null outside the realtime cohort flag targeting rollout, on projects the realtime pipeline does not cover, and for cohorts that match on neither events nor person properties, which nothing in the flag API decides on. */
+    /** Whether feature flags can target this cohort, and the progress of the build that gets it there. Null outside the real-time cohort flag targeting rollout, on projects the realtime pipeline does not cover, and for cohorts that match on neither events nor person properties, which nothing in the flag API decides on. */
     readonly realtime: CohortRealtimeReadinessApi | null
-    /** Whether realtime is on for this cohort, so PostHog keeps its membership current for feature flags and workflows. Send true when you create a cohort to turn realtime on for it. It stays false when the project has no realtime cohorts or the cohort's criteria can't be realtime. For an existing cohort, use the `realtime` endpoint to turn it on or off. */
+    /** Whether real-time is on for this cohort, so PostHog keeps its membership current for feature flags and workflows. Send true when you create a cohort to turn real-time on for it. It stays false when the project has no real-time cohorts or the cohort's criteria can't be real-time. For an existing cohort, use the `realtime` endpoint to turn it on or off. */
     realtime_enabled?: boolean
     readonly experiment_set: readonly number[]
     /** How this row matched the `search` query parameter: `exact` (the term is a case-insensitive substring of a searched field) or `similar` (a fuzzy trigram match, returned only when no exact match exists). Null when the list is not filtered by `search`. */
@@ -549,9 +549,9 @@ export interface PatchedCohortApi {
     cohort_type?: CohortTypeEnumApi | BlankEnumApi | null
     /** Flags describing which kinds of conditions the cohort's filters contain. Null when the cohort has no filters to classify. */
     readonly condition_type?: CohortConditionTypeFlagsApi | null
-    /** Whether feature flags can target this cohort, and the progress of the build that gets it there. Null outside the realtime cohort flag targeting rollout, on projects the realtime pipeline does not cover, and for cohorts that match on neither events nor person properties, which nothing in the flag API decides on. */
+    /** Whether feature flags can target this cohort, and the progress of the build that gets it there. Null outside the real-time cohort flag targeting rollout, on projects the realtime pipeline does not cover, and for cohorts that match on neither events nor person properties, which nothing in the flag API decides on. */
     readonly realtime?: CohortRealtimeReadinessApi | null
-    /** Whether realtime is on for this cohort, so PostHog keeps its membership current for feature flags and workflows. Send true when you create a cohort to turn realtime on for it. It stays false when the project has no realtime cohorts or the cohort's criteria can't be realtime. For an existing cohort, use the `realtime` endpoint to turn it on or off. */
+    /** Whether real-time is on for this cohort, so PostHog keeps its membership current for feature flags and workflows. Send true when you create a cohort to turn real-time on for it. It stays false when the project has no real-time cohorts or the cohort's criteria can't be real-time. For an existing cohort, use the `realtime` endpoint to turn it on or off. */
     realtime_enabled?: boolean
     readonly experiment_set?: readonly number[]
     /** How this row matched the `search` query parameter: `exact` (the term is a case-insensitive substring of a searched field) or `similar` (a fuzzy trigram match, returned only when no exact match exists). Null when the list is not filtered by `search`. */
@@ -801,7 +801,7 @@ export interface CohortPersonsResponseApi {
 }
 
 export interface CohortRealtimeRequestApi {
-    /** True turns realtime on for the cohort and for every realtime cohort it includes as criteria, and starts preparing them from past events. PostHog refuses that when the project's plan allows no more cohorts with realtime on, or when the criteria look back further than the plan allows. True for a cohort that is already on, and that nothing is preparing, asks PostHog to prepare it again. False turns realtime off. PostHog refuses that while a feature flag, an active workflow, or another cohort with realtime on reads the cohort. */
+    /** True turns real-time on for the cohort and for every real-time cohort it includes as criteria, and starts preparing them from past events. PostHog refuses that when the project's plan allows no more cohorts with real-time on, or when the criteria look back further than the plan allows. True for a cohort that is already on, and that nothing is preparing, asks PostHog to prepare it again. False turns real-time off. PostHog refuses that while a feature flag, an active workflow, or another cohort with real-time on reads the cohort. */
     enabled: boolean
 }
 
@@ -923,7 +923,7 @@ export const RealtimeCohortsJoinStateEnumApi = {
 } as const
 
 export interface RealtimeCohortsJoinStateApi {
-    /** Where this project stands in joining the realtime cohorts beta. `serving`: the project has realtime cohorts. `setting_up`: a join is in progress. `available`: a POST to `join` starts one. `not_open`: this region takes no new projects. `refused`: the project cannot join by itself, and support can turn realtime cohorts on for it. `failed`: the last join did not finish, and a join an hour later tries again.
+    /** Where this project stands in joining the real-time cohorts beta. `serving`: the project has real-time cohorts. `setting_up`: a join is in progress. `available`: a POST to `join` starts one. `not_open`: this region takes no new projects. `refused`: the project cannot join by itself, and support can turn real-time cohorts on for it. `failed`: the last join did not finish, and a join an hour later tries again.
      *
      * * `serving` - Serving
      * * `setting_up` - Setting up
