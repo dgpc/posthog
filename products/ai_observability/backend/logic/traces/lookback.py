@@ -20,3 +20,13 @@ def lookback_selection(selection: TraceSelection) -> TraceSelection:
 
 def seen_before(window: TraceWindow) -> datetime:
     return lookback_window(window).start
+
+
+def has_no_lookback(window: TraceWindow) -> bool:
+    """Whether the lookback, with its read buffer, would start before the first representable date, as for a window
+    starting in the first month of year 1."""
+    try:
+        lookback_window(window).read_bounds()
+    except OverflowError:
+        return True
+    return False

@@ -132,9 +132,12 @@ def trace_latency(columns: TraceColumns, aggregate: Aggregate) -> ast.Expr:
     return ast.Call(name="round", args=[_if(nothing_timed, _constant(None), total), _constant(2)])
 
 
+def event_errored(columns: TraceColumns) -> ast.Expr:
+    return _compare(ast.CompareOperationOp.Eq, columns.is_error, _constant("true"))
+
+
 def trace_errored(columns: TraceColumns, aggregate: Aggregate) -> ast.Expr:
-    flagged = _compare(ast.CompareOperationOp.Eq, columns.is_error, _constant("true"))
-    return _compare(ast.CompareOperationOp.Gt, aggregate("countIf", [flagged]), _constant(0))
+    return _compare(ast.CompareOperationOp.Gt, aggregate("countIf", [event_errored(columns)]), _constant(0))
 
 
 def error_message(columns: TraceColumns) -> ast.Expr:

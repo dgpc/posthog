@@ -1,9 +1,12 @@
 from datetime import UTC, datetime, timedelta
 
+from parameterized import parameterized
+
 from posthog.schema import EventPropertyFilter, PropertyOperator
 
 from products.ai_observability.backend.logic.traces.lookback import (
     LOOKBACK,
+    has_no_lookback,
     lookback_selection,
     lookback_window,
     seen_before,
@@ -42,3 +45,24 @@ def test_lookback_selection_keeps_only_the_test_account_and_support_switches():
 
 def test_seen_before_is_the_lookback_start():
     assert seen_before(WINDOW) == datetime(2026, 10, 19, tzinfo=UTC)
+
+
+@parameterized.expand(
+    [
+        ("a_recent_range", WINDOW, False),
+        (
+            "a_range_starting_inside_the_first_month",
+            TraceWindow(start=datetime(1, 1, 20, tzinfo=UTC), end=WINDOW.end),
+            True,
+        ),
+        (
+            "a_lookback_starting_inside_the_read_buffer",
+            TraceWindow(start=datetime(1, 1, 31, 0, 5, tzinfo=UTC), end=WINDOW.end),
+            True,
+        ),
+    ]
+)
+def test_has_no_lookback_when_the_lookback_reads_before_the_first_date(
+    _name: str, window: TraceWindow, expected: bool
+) -> None:
+    assert has_no_lookback(window) is expected

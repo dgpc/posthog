@@ -25,6 +25,7 @@ from .trace_expression_queries import (
     EVENTS_COLUMNS,
     TRACE_EVENT_NAMES,
     error_message,
+    event_errored,
     grouped,
     names_session,
     not_impersonated,
@@ -94,9 +95,9 @@ def _trace_scope_events(selection: TraceSelection) -> list[ast.Expr]:
     if selection.error is not None:
         events.append(
             parse_expr(
-                "{is_error} = 'true' AND {message} = {error}",
+                "{errored} AND {message} = {error}",
                 placeholders={
-                    "is_error": EVENTS_COLUMNS.is_error,
+                    "errored": event_errored(EVENTS_COLUMNS),
                     "message": error_message(EVENTS_COLUMNS),
                     "error": ast.Constant(value=selection.error),
                 },
