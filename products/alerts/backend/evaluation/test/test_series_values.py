@@ -204,6 +204,22 @@ class TestSeriesValuesShadowForAlerts(ClickhouseTestMixin, APIBaseTest):
         assert shadowed == live
         assert (properties["outcome"], properties["max_abs_difference"]) == ("mismatch", 1.0)
 
+    def test_a_multi_series_alert_compares_the_series_it_watches(self) -> None:
+        _create_event(team=self.team, event="upgraded", distinct_id="p1", timestamp="2024-01-14T09:00:00Z")
+        flush_persons_and_events()
+        query = _trends_query("day")
+        query["series"].append({"kind": "EventsNode", "event": "upgraded", "math": "total"})
+        alert = self._alert_on(
+            query, {"type": "TrendsAlertConfig", "series_index": 1}, detector=None, calculation_interval="daily"
+        )
+        live = check_alert_for_insight(alert)
+
+        shadowed, properties = self._shadowed_check(alert)
+
+        assert shadowed == live
+        assert (properties["outcome"], properties["max_abs_difference"]) == ("match", 0.0)
+        assert properties["buckets_compared"] > 0
+
     def test_a_failing_shadow_step_records_an_error_and_never_changes_the_check(self) -> None:
         alert = self._alert(detector=_THRESHOLD_DETECTOR)
         live = check_alert_for_insight(alert)
@@ -338,9 +354,9 @@ class TestCompareClosedValues(SimpleTestCase):
         closed = ClosedSeriesValues(
             values={datetime(2024, 1, 13): 5, datetime(2024, 1, 14): stored}, live_from=datetime(2024, 1, 15)
         )
-        live = [{"days": ["2024-01-14", "2024-01-15"], "data": [2, 3]}]
+        live_series = {"days": ["2024-01-14", "2024-01-15"], "data": [2, 3]}
 
-        comparison = compare_closed_values(closed, live)
+        comparison = compare_closed_values(closed, live_series)
 
         assert (
             comparison.outcome,

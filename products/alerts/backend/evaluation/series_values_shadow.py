@@ -18,6 +18,7 @@ from posthog.exceptions_capture import capture_exception
 from posthog.hogql_queries.apply_dashboard_filters import dashboard_filter_from_dict
 from posthog.models.team import Team
 from posthog.models.user import User
+from posthog.tasks.alerts.trends import _pick_series_result
 
 from products.alerts.backend.models.alert import AlertConfiguration
 from products.product_analytics.backend.facade.contracts import ClosedSeriesValues, SeriesValuesUnavailable
@@ -81,11 +82,10 @@ def effective_trends_runner(
     return runner
 
 
-def compare_closed_values(closed: ClosedSeriesValues | SeriesValuesUnavailable, live: list[Any]) -> ShadowComparison:
-    if isinstance(closed, SeriesValuesUnavailable):
-        return ShadowComparison(outcome="unavailable", reason=closed.reason)
-    series = live[0]
-    live_by_bucket = {datetime.fromisoformat(day): value for day, value in zip(series["days"], series["data"])}
+def compare_closed_values(closed: ClosedSeriesValues, live_series: dict[str, Any]) -> ShadowComparison:
+    live_by_bucket = {
+        datetime.fromisoformat(day): value for day, value in zip(live_series["days"], live_series["data"])
+    }
     differences = [
         abs(float(live_by_bucket[bucket]) - stored)
         for bucket, stored in closed.values.items()
@@ -133,8 +133,15 @@ def compare_series_values_shadow(
             comparison = ShadowComparison(outcome="unavailable", reason="no_live_result")
         else:
             runner = effective_trends_runner(alert.team, query, filters_override, alert.created_by)
-            closed = closed_series_values(runner, run_inserts=True, wait_timeout_seconds=SHADOW_BUILD_BUDGET_SECONDS)
-            comparison = compare_closed_values(closed, live)
+            series_index = int((alert.config or {}).get("series_index", 0))
+            closed = closed_series_values(
+                runner, series_index=series_index, run_inserts=True, wait_timeout_seconds=SHADOW_BUILD_BUDGET_SECONDS
+            )
+            if isinstance(closed, SeriesValuesUnavailable):
+                comparison = ShadowComparison(outcome="unavailable", reason=closed.reason)
+            else:
+                live_series = _pick_series_result(series_index, calculation_result, query)
+                comparison = compare_closed_values(closed, dict(live_series))
     except _CANCELLATION:
         raise
     except Exception as err:
