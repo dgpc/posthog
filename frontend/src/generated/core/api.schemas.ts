@@ -5210,11 +5210,6 @@ export interface DataDeletionRequestApi {
      */
     readonly submission_id: string | null
     /**
-     * Number of selected events, when calculated.
-     * @nullable
-     */
-    readonly count: number | null
-    /**
      * Identifier of the user who submitted the request.
      * @nullable
      */
