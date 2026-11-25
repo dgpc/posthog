@@ -231,6 +231,7 @@ export type SettingId =
     | 'integration-slack'
     | 'slack-app-channels'
     | 'slack-app-personal'
+    | 'slack-app-workspace'
     | 'integration-webhooks'
     | 'internal-user-filtering'
     | 'invites'

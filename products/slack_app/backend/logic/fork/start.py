@@ -10,6 +10,11 @@ import structlog
 
 from posthog.slack.formatting import escape_slack_mrkdwn
 
+from products.slack_app.backend.services.shared_channels import (
+    SHARED_CHANNELS_TURNED_OFF_MESSAGE,
+    SharedChannelAccess,
+    shared_channel_access,
+)
 from products.slack_app.backend.services.slack_conversations import channel_is_ext_shared
 
 logger = structlog.get_logger(__name__)
@@ -68,7 +73,7 @@ def start_fork(payload: dict[str, Any], *, target_channel: str | None = None) ->
 
     from products.mcp_store.backend.facade.api import has_slack_mcp_connected
     from products.slack_app.backend.analytics import capture_slack_event
-    from products.slack_app.backend.api import SLACK_INTEGRATION_KIND, _channel_is_approved, _start_mention_workflow
+    from products.slack_app.backend.api import SLACK_INTEGRATION_KIND, _start_mention_workflow
     from products.slack_app.backend.facade.constants import PUBLIC_CHANNEL_CONVERSATION_TYPES
     from products.slack_app.backend.feature_flags import is_slack_app_forking_enabled
     from products.slack_app.backend.logic.feature_tips.features import SlackFeature
@@ -166,11 +171,14 @@ def start_fork(payload: dict[str, Any], *, target_channel: str | None = None) ->
     # writes gated. Refuse rather than fork-and-discover-later, and carry the flag
     # onto the run so the destination inherits the source's posture.
     is_ext_shared = channel_is_ext_shared(slack, source_channel)
-    if is_ext_shared and not _channel_is_approved(slack_team_id, source_channel):
-        logger.info("slack_app_fork_refused", reason="ext_shared_unapproved", slack_team_id=slack_team_id)
+    access = shared_channel_access(integration, source_channel) if is_ext_shared else SharedChannelAccess.ALLOWED
+    if access != SharedChannelAccess.ALLOWED:
+        logger.info("slack_app_fork_refused", reason=f"ext_shared_{access}", slack_team_id=slack_team_id)
         _ephemeral(
             slack,
-            "This is a Slack Connect channel that hasn't been approved for PostHog yet. "
+            SHARED_CHANNELS_TURNED_OFF_MESSAGE
+            if access == SharedChannelAccess.TURNED_OFF
+            else "This is a Slack Connect channel that hasn't been approved for PostHog yet. "
             "`@PostHog` in the channel to approve it first, then fork.",
             **reply_to,
         )
