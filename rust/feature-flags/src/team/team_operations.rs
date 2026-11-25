@@ -53,6 +53,10 @@ const TEAM_COLUMNS: &str = "
         1
     )::smallint AS property_matching_version,
     COALESCE(
+        (SELECT null_counts_as_not_set FROM feature_flags_teamfeatureflagsconfig WHERE team_id = posthog_team.id),
+        false
+    ) AS null_counts_as_not_set,
+    COALESCE(
         (SELECT blocked_hosts FROM feature_flags_teamfeatureflagpolicyconfig WHERE team_id = posthog_team.id),
         '{}'
     )::text[] AS flags_blocked_hosts,
@@ -319,6 +323,7 @@ mod tests {
             team_from_pg.property_matching_version,
             PropertyMatchingVersion::LEGACY
         );
+        assert!(!team_from_pg.null_counts_as_not_set);
     }
 
     #[tokio::test]
@@ -339,8 +344,8 @@ mod tests {
 
         sqlx::query(
             "INSERT INTO feature_flags_teamfeatureflagsconfig \
-             (team_id, minimal_flag_called_events, property_matching_version) \
-             VALUES ($1, true, 2)",
+             (team_id, minimal_flag_called_events, property_matching_version, null_counts_as_not_set) \
+             VALUES ($1, true, 2, true)",
         )
         .bind(team.id)
         .execute(&mut *conn)
@@ -356,6 +361,7 @@ mod tests {
             team_from_pg.property_matching_version,
             PropertyMatchingVersion::EXPLICIT
         );
+        assert!(team_from_pg.null_counts_as_not_set);
     }
 
     #[tokio::test]

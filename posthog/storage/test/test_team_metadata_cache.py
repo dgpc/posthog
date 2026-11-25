@@ -454,7 +454,8 @@ class TestVerifyTeamMetadata(BaseTest):
             # TeamFeatureFlagsConfig fields are tracked separately from TEAM_METADATA_FIELDS.
             ("minimal_flag_called_events", True),
             ("property_matching_version", 2),
-            ("null_counts_as_not_set", True),
+            # self.team's row comes from the team-creation signal, which writes True.
+            ("null_counts_as_not_set", False),
             ("flags_blocked_hosts", ["example.com"]),
             ("flags_blocked_ips", ["203.0.113.7"]),
             ("realtime_cohort_level", "serving"),
@@ -573,6 +574,7 @@ class TestFeatureFlagsConfigInMetadata(BaseTest):
             team=gated_team, level=RealtimeCohortLevel.SERVING, purpose=RealtimeCohortAccessPurpose.PILOT
         )
         ungated_team = self.organization.teams.create(name="Ungated team")
+        TeamFeatureFlagsConfig.objects.filter(team=ungated_team).update(null_counts_as_not_set=False)
         teams = list(
             Team.objects.select_related("organization", "project").filter(id__in=[gated_team.id, ungated_team.id])
         )
