@@ -28,3 +28,8 @@ export const SingleTrace: Story = {
 }
 export const Narrow: Story = { decorators: [withWidth(480)] }
 export const WithRowLabel: Story = { args: { label: 'Turn ended on search_docs: TimeoutError after 30s' } }
+export const WithBack: Story = { args: { back: { label: 'Back to errors', onBack: () => {} } } }
+export const WithBackNarrow: Story = {
+    args: { back: { label: 'Back to errors', onBack: () => {} } },
+    decorators: [withWidth(360)],
+}

@@ -1,6 +1,13 @@
 import { urls } from 'scenes/urls'
 
-import { SHELL_TABS, ShellLocation, shellDocsUrl, shellLinkParams, shellLocationForSceneKey } from './shellNavigation'
+import {
+    SHELL_TABS,
+    ShellLocation,
+    listPageLinkParams,
+    shellDocsUrl,
+    shellLinkParams,
+    shellLocationForSceneKey,
+} from './shellNavigation'
 
 const DOCS = 'https://posthog.com/docs/ai-observability'
 
@@ -58,16 +65,26 @@ describe('shellNavigation', () => {
         expect(shellDocsUrl(location)).toBe(expected)
     })
 
-    it('keeps the filters in tab and scope links but not the open trace or session', () => {
+    it.each<[string, (params: Record<string, string>) => Record<string, string>, Record<string, string>]>([
+        ['tab and scope links keep the filters', shellLinkParams, { date_from: '-7d' }],
+        [
+            'links between a list and a full page also keep the list scope',
+            listPageLinkParams,
+            { date_from: '-7d', person: 'p', error: 'e', tool: 't' },
+        ],
+    ])('%s but not the open trace or session', (_name, linkParams, expected) => {
         expect(
-            shellLinkParams({
+            linkParams({
                 date_from: '-7d',
+                person: 'p',
+                error: 'e',
+                tool: 't',
                 trace: 't1',
                 ts: '2026-09-01T10:00:00Z',
                 step: 's1',
                 session: 'x',
                 timestamp: '2026-09-01T09:00:00Z',
             })
-        ).toEqual({ date_from: '-7d' })
+        ).toEqual(expected)
     })
 })

@@ -31,7 +31,7 @@ class SessionListQuerySerializer(ListFilterQuerySerializer):
         "A session is listed when one of its traces has an event that matches every filter."
     )
     search = search_field("the generations and embeddings of the session's traces")
-    person_id = person_scope_field("sessions with a trace whose events")
+    person_id = person_scope_field("sessions with a trace")
     group_key = group_scope_field("sessions with a trace whose events")
     limit = page_limit_field("sessions", default=api.SESSION_LIST_DEFAULT_LIMIT, maximum=api.SESSION_LIST_MAX_LIMIT)
 

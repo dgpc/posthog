@@ -14,6 +14,8 @@ from posthog.helpers.impersonation import is_impersonated
 from ...facade import api, contracts
 from .list_filters import (
     ListFilterQuerySerializer,
+    error_scope_field,
+    failed_tool_scope_field,
     group_scope_field,
     page_limit_field,
     person_scope_field,
@@ -21,6 +23,7 @@ from .list_filters import (
     require_query_scope_for_filters,
     search_field,
     selection_filters,
+    tool_scope_field,
 )
 from .property_filters import QUERY_SCOPE
 from .trace_ids import MalformedTraceIdSegmentError, decode_trace_id_segment
@@ -52,7 +55,10 @@ class TraceAvailabilitySerializer(serializers.Serializer):
 class TraceListQuerySerializer(ListFilterQuerySerializer):
     properties = property_filters_field("A trace is listed when one of its events matches every filter.")
     search = search_field("the trace's generations and embeddings")
-    person_id = person_scope_field("traces whose events")
+    person_id = person_scope_field("traces")
+    error = error_scope_field()
+    tool = tool_scope_field()
+    failed_tool = failed_tool_scope_field()
     group_key = group_scope_field("traces whose events")
     view = serializers.ChoiceField(
         choices=api.QUICK_FILTERS,

@@ -29,7 +29,7 @@ import {
     shownPageOf,
 } from '../lists/cursorPaging'
 import { ListFilters, ListFiltersLogicProps, listFiltersLogic } from '../lists/listFiltersLogic'
-import { SESSION_PARAM, SESSION_TIMESTAMP_PARAM, shellLinkParams } from '../shell/shellNavigation'
+import { SESSION_PARAM, SESSION_TIMESTAMP_PARAM, listPageLinkParams } from '../shell/shellNavigation'
 import { shellScopeLogic } from '../shell/shellScopeLogic'
 import { RouterUrl, currentUrlWith, rawSearchParam } from '../trace/rawSearchParam'
 import { TRACE_DRAWER_PARAMS } from '../trace/traceDrawerRows'
@@ -41,7 +41,11 @@ import { sessionsTracking } from './sessionsTracking'
 
 export const SESSIONS_PAGE_SIZE = 50
 
-export const SESSIONS_LIST_FILTERS: ListFiltersLogicProps = { listId: 'sessions', path: urls.aiObservabilitySessions() }
+export const SESSIONS_LIST_FILTERS: ListFiltersLogicProps = {
+    listId: 'sessions',
+    path: urls.aiObservabilitySessions(),
+    scopeKinds: ['person'],
+}
 
 /** How far the open session has been read: from a list page, or on its own when no loaded page lists it. */
 export type OpenSessionRead =
@@ -54,7 +58,7 @@ export type OpenSessionStatus = 'none' | OpenSessionRead['status']
 type ListUrl = ReturnType<typeof currentUrlWith>
 
 function narrowsSelection(params: AiObservabilitySessionsListParams | null): boolean {
-    return !!(params?.properties || params?.search || params?.filter_test_accounts)
+    return !!(params?.properties || params?.search || params?.filter_test_accounts || params?.person_id)
 }
 
 // Opening a session closes the trace drawer of the session before it. The link carries when the session started, so a
@@ -417,7 +421,7 @@ export const sessionsListLogic = kea<sessionsListLogicType>([
                 return sessionPageHref(
                     openSessionId,
                     openItem?.firstSeen ?? openSessionTimestamp,
-                    shellLinkParams(searchParams)
+                    listPageLinkParams(searchParams)
                 )
             },
         ],

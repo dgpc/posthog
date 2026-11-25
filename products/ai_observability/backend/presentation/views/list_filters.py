@@ -42,7 +42,41 @@ def search_field(searched: str) -> serializers.CharField:
 def person_scope_field(listed: str) -> serializers.UUIDField:
     return serializers.UUIDField(
         required=False,
-        help_text=f"Lists only {listed} belong to the person with this UUID.",
+        help_text=f"Lists only {listed} where any event belongs to the person with this UUID. A listed trace keeps "
+        "the events of other people.",
+    )
+
+
+# allow_blank lets an empty value through the field: DRF would otherwise drop it as if it were absent, and the list would
+# silently ignore the scope. TraceSelection then refuses it with a 400.
+def error_scope_field() -> serializers.CharField:
+    return serializers.CharField(
+        required=False,
+        allow_blank=True,
+        max_length=10_000,
+        trim_whitespace=False,
+        help_text="Lists only traces where any event has this normalized error message, as the errors list shows it. "
+        "A listed trace keeps its other events.",
+    )
+
+
+def tool_scope_field() -> serializers.CharField:
+    return serializers.CharField(
+        required=False,
+        allow_blank=True,
+        max_length=255,
+        help_text="Lists only traces where any event called the tool with this name. A listed trace keeps its other "
+        "events.",
+    )
+
+
+def failed_tool_scope_field() -> serializers.CharField:
+    return serializers.CharField(
+        required=False,
+        allow_blank=True,
+        max_length=255,
+        help_text="Lists only traces where a call to the tool with this name failed. A listed trace keeps its other "
+        "events.",
     )
 
 
@@ -73,10 +107,10 @@ class TraceDateRangeQuerySerializer(serializers.Serializer):
     )
 
 
-class ListFilterQuerySerializer(TraceDateRangeQuerySerializer):
-    """The filter and paging params that the traces list and the sessions list share. Each list adds the params whose
-    help names what it lists, `properties`, `search`, `person_id`, `group_key` and `limit`, through the field functions
-    above."""
+class SelectionFilterQuerySerializer(TraceDateRangeQuerySerializer):
+    """The filter params that every list over a trace selection shares, whichever way it pages. Each list adds the
+    params whose help names what it lists, `properties`, `search`, the scopes, `group_key` and `limit`, through the
+    field functions above."""
 
     group_type_index = serializers.IntegerField(
         required=False,
@@ -85,15 +119,20 @@ class ListFilterQuerySerializer(TraceDateRangeQuerySerializer):
         help_text=f"The index of the group type that group_key belongs to, from 0 to {GROUP_TYPES_LIMIT - 1}. "
         "Send it with group_key.",
     )
-    cursor = serializers.CharField(
-        required=False,
-        help_text="The nextCursor of the previous page, to read the page after it. Leave it out for the first page.",
-    )
 
     def validate(self, attrs: dict[str, Any]) -> dict[str, Any]:
         if ("group_key" in attrs) != ("group_type_index" in attrs):
             raise serializers.ValidationError("Send group_key and group_type_index together.")
         return attrs
+
+
+class ListFilterQuerySerializer(SelectionFilterQuerySerializer):
+    """The filters plus the cursor paging of the traces list and the sessions list."""
+
+    cursor = serializers.CharField(
+        required=False,
+        help_text="The nextCursor of the previous page, to read the page after it. Leave it out for the first page.",
+    )
 
 
 _PAGE_POSITION_PARAMS = ("cursor", "before_cursor", "around")
@@ -111,6 +150,9 @@ def selection_filters(query: dict[str, Any]) -> dict[str, Any]:
         "filter_test_accounts": query["filter_test_accounts"],
         "search": query.get("search") or None,
         "person_id": str(query["person_id"]) if "person_id" in query else None,
+        "error": query.get("error"),
+        "tool": query.get("tool"),
+        "failed_tool": query.get("failed_tool"),
         "group": api.TraceGroupScope(key=query["group_key"], type_index=query["group_type_index"])
         if "group_key" in query
         else None,

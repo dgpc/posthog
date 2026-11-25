@@ -8,6 +8,7 @@ import { isAnyPropertyFilters } from '~/queries/schema-guards'
 import { AnyPropertyFilter } from '~/types'
 
 import { currentUrlWith, rawSearchParam } from '../trace/rawSearchParam'
+import { ListScope, ListScopeKind, scopeFromUrl } from './listScopes'
 
 export const LIST_SEARCH_DEBOUNCE_MS = 300
 
@@ -17,12 +18,19 @@ export interface ListFilters {
     /** The applied search. The text still being typed is `searchDraft`. */
     search: string
     quickFilter: string | null
+    scope: ListScope | null
 }
 
 export interface ListFiltersLogicProps {
     listId: string
     /** The list's route, such as `urls.aiObservabilityTraces()`. The logic reads and writes the URL only there. */
     path: string
+    searchParam?: string
+    /**
+     * The scopes the list reads from the URL, by priority. Defaults to none, because another path may give the same
+     * param another meaning.
+     */
+    scopeKinds?: readonly ListScopeKind[]
 }
 
 interface FilterInput {
@@ -30,23 +38,43 @@ interface FilterInput {
     searchDraft: string
 }
 
-const NO_FILTERS: ListFilters = { propertyFilters: [], search: '', quickFilter: null }
+const NO_FILTERS: ListFilters = { propertyFilters: [], search: '', quickFilter: null, scope: null }
 const NO_INPUT: FilterInput = { filters: NO_FILTERS, searchDraft: '' }
+// pinned: the search param of the traces and sessions lists, which saved links read
+const DEFAULT_SEARCH_PARAM = 'trace_search'
+const NO_SCOPE_KINDS: readonly ListScopeKind[] = []
 
-function filtersFromUrl(searchParams: Record<string, unknown>, search: string): ListFilters {
+interface UrlShape {
+    searchParam: string
+    scopeKinds: readonly ListScopeKind[]
+}
+
+function urlShapeOf(props: ListFiltersLogicProps): UrlShape {
+    return { searchParam: props.searchParam ?? DEFAULT_SEARCH_PARAM, scopeKinds: props.scopeKinds ?? NO_SCOPE_KINDS }
+}
+
+function filtersFromUrl(searchParams: Record<string, unknown>, search: string, shape: UrlShape): ListFilters {
     return {
         propertyFilters: isAnyPropertyFilters(searchParams.filters) ? searchParams.filters : [],
-        search: rawSearchParam(search, 'trace_search') ?? '',
+        search: rawSearchParam(search, shape.searchParam) ?? '',
         quickFilter: rawSearchParam(search, 'view'),
+        scope: scopeFromUrl(search, shape.scopeKinds),
     }
 }
 
-// pinned: `filters`, `trace_search` and `view`, which saved links and the other lists read
-function filtersToUrl({ propertyFilters, search, quickFilter }: ListFilters): Record<string, unknown> {
+// pinned: `filters`, the search param and `view`, which saved links and the other lists read. The scope in the URL
+// gives way to the list's own, so clearing it removes only its param.
+function filtersToUrl(
+    { propertyFilters, search, quickFilter, scope }: ListFilters,
+    urlScope: ListScope | null,
+    { searchParam }: UrlShape
+): Record<string, unknown> {
     return {
         filters: propertyFilters.length > 0 ? propertyFilters : undefined,
-        trace_search: search || undefined,
+        [searchParam]: search || undefined,
         view: quickFilter ?? undefined,
+        ...(urlScope && { [urlScope.kind]: undefined }),
+        ...(scope && { [scope.kind]: scope.value }),
     }
 }
 
@@ -66,6 +94,9 @@ export interface listFiltersLogicValues {
 export interface listFiltersLogicActions {
     applyUrlFilters: (filters: ListFilters) => {
         filters: ListFilters
+    }
+    clearScope: () => {
+        value: true
     }
     resetFilters: () => {
         value: true
@@ -109,6 +140,7 @@ export const listFiltersLogic = kea<listFiltersLogicType>([
         setSearchDraft: (search: string) => ({ search }),
         setSearch: (search: string) => ({ search }),
         toggleQuickFilter: (id: string) => ({ id }),
+        clearScope: true,
         resetFilters: true,
         applyUrlFilters: (filters: ListFilters) => ({ filters }),
     }),
@@ -120,6 +152,7 @@ export const listFiltersLogic = kea<listFiltersLogicType>([
                 setPropertyFilters: (input, { propertyFilters }) => changeWithDraft(input, { propertyFilters }),
                 toggleQuickFilter: (input, { id }) =>
                     changeWithDraft(input, { quickFilter: input.filters.quickFilter === id ? null : id }),
+                clearScope: (input) => changeWithDraft(input, { scope: null }),
                 setSearchDraft: (input, { search }) => ({ ...input, searchDraft: search }),
                 setSearch: (input, { search }) => ({ searchDraft: search, filters: { ...input.filters, search } }),
                 resetFilters: () => NO_INPUT,
@@ -132,16 +165,23 @@ export const listFiltersLogic = kea<listFiltersLogicType>([
         searchDraft: [(s) => [s.filterInput], (filterInput: FilterInput): string => filterInput.searchDraft],
     }),
     listeners(({ actions, props, values }) => {
+        const shape = urlShapeOf(props)
         const writeFilters = (): void => {
             const { location, searchParams } = router.values
-            const isOwnPath = removeProjectIdIfPresent(location.pathname) === props.path
-            if (isOwnPath && !objectsEqual(filtersFromUrl(searchParams, location.search), values.filters)) {
-                router.actions.replace(...currentUrlWith(router.values, filtersToUrl(values.filters)))
+            if (removeProjectIdIfPresent(location.pathname) !== props.path) {
+                return
+            }
+            const urlFilters = filtersFromUrl(searchParams, location.search, shape)
+            if (!objectsEqual(urlFilters, values.filters)) {
+                router.actions.replace(
+                    ...currentUrlWith(router.values, filtersToUrl(values.filters, urlFilters.scope, shape))
+                )
             }
         }
         return {
             setPropertyFilters: writeFilters,
             toggleQuickFilter: writeFilters,
+            clearScope: writeFilters,
             setSearch: writeFilters,
             resetFilters: writeFilters,
             setSearchDraft: async (_, breakpoint) => {
@@ -154,7 +194,7 @@ export const listFiltersLogic = kea<listFiltersLogicType>([
     }),
     urlToAction(({ actions, props, values }) => ({
         [props.path]: (_, searchParams, __, { search }) => {
-            const filters = filtersFromUrl(searchParams, search)
+            const filters = filtersFromUrl(searchParams, search, urlShapeOf(props))
             if (!objectsEqual(filters, values.filters)) {
                 actions.applyUrlFilters(filters)
             }

@@ -137,6 +137,15 @@ def trace_errored(columns: TraceColumns, aggregate: Aggregate) -> ast.Expr:
     return _compare(ast.CompareOperationOp.Gt, aggregate("countIf", [flagged]), _constant(0))
 
 
+def error_message(columns: TraceColumns) -> ast.Expr:
+    """The event's normalized error message as it was sent, NULL when the event has none."""
+    # Where events store properties as a JSON string, `properties.$ai_error_normalized` keeps the JSON escapes, so a
+    # message with a quote, a backslash or a newline would not equal the message as sent. JSONExtractString decodes it
+    # there, and HogQL prints it as a read of the typed property where events store typed properties.
+    message = ast.Call(name="JSONExtractString", args=[columns.properties, _constant("$ai_error_normalized")])
+    return ast.Call(name="nullIf", args=[message, _constant("")])
+
+
 def trace_cost(columns: TraceColumns, aggregate: Aggregate) -> ast.Expr:
     """The trace's cost in USD over its billed events, NULL when none of them reports a cost."""
     return aggregate("sumIf", [columns.total_cost, _event_in(columns, BILLED_EVENT_NAMES)])
@@ -211,3 +220,9 @@ def event_identified(columns: TraceColumns) -> ast.Expr:
             ast.Not(expr=event_is_otel(columns)),
         ]
     )
+
+
+def event_anonymous(columns: TraceColumns) -> ast.Expr:
+    # No OpenTelemetry clause: an OpenTelemetry event carries a distinct id derived from something other than the trace
+    # id, so it counts as identified here.
+    return _compare(ast.CompareOperationOp.Eq, columns.distinct_id, _if_null(columns.trace_id, ""))

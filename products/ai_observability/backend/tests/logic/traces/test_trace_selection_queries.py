@@ -69,7 +69,8 @@ def load_cases() -> list[dict[str, Any]]:
       events table and ai_events.
     - `selection`: `date_from` and `date_to` in minutes, and optionally `properties` (property filter objects),
       `filter_test_accounts`, `include_support_traces`, `search`, `quick_filter` (`errors` or `feedback`),
-      `person_id`, `group` as `{"key", "type_index"}`, `order` (`newest_first` or `oldest_first`) and `session_id`.
+      `person_id`, `error`, `tool`, `failed_tool`, `group` as `{"key", "type_index"}`, `order` (`newest_first` or
+      `oldest_first`) and `session_id`.
     - `expected_trace_ids`: the first page, in the selection's order.
     - `expected_counts`: `total`, `errors` and `feedback` for the selection without its quick filter, or null for a
       session scope, which reads no counts.
@@ -116,6 +117,9 @@ def to_selection(team: Team, selection: dict[str, Any]) -> TraceSelection:
         include_support_traces=selection.get("include_support_traces", False),
         search=selection.get("search"),
         person_id=selection.get("person_id"),
+        error=selection.get("error"),
+        tool=selection.get("tool"),
+        failed_tool=selection.get("failed_tool"),
         group=TraceGroupScope(key=group["key"], type_index=group["type_index"]) if group else None,
         quick_filter=selection.get("quick_filter"),
         session_id=selection.get("session_id"),
@@ -402,6 +406,30 @@ class TestTraceSelectionQueries(ClickhouseTestMixin, BaseTest):
         )
 
         assert [position.trace_id for position in page.rows.positions] == ["after-identify", "before-identify"]
+
+    def test_an_error_scope_matches_a_message_with_quotes_a_backslash_a_newline_and_unicode_exactly(self) -> None:
+        message = 'Can\'t parse "réponse" in C:\\data\nat line <N> ✗'
+        seed(
+            self.team,
+            [
+                {
+                    "event": "$ai_generation",
+                    "trace_id": "exact",
+                    "minutes": 0,
+                    "properties": {"$ai_is_error": True, "$ai_error_normalized": message},
+                },
+                {
+                    "event": "$ai_generation",
+                    "trace_id": "without-newline",
+                    "minutes": 1,
+                    "properties": {"$ai_is_error": True, "$ai_error_normalized": message.replace("\n", " ")},
+                },
+            ],
+        )
+
+        page = load_rows_after(self.team, self.user, self._selection(error=message), after=None, take=10)
+
+        assert [position.trace_id for position in page.rows.positions] == ["exact"]
 
     @parameterized.expand([("in the selection", False), ("in the test account filters", True)])
     def test_a_hogql_filter_can_read_a_saved_view(self, _name: str, as_test_account_filter: bool) -> None:

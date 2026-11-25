@@ -337,6 +337,17 @@ class TestTraceListViewSet(ClickhouseTestMixin, APIBaseTest):
         else:
             assert [item["id"] for item in response.json()["items"]] == ["chosen"]
 
+    def test_list_passes_error_tool_and_failed_tool_to_the_selection(self) -> None:
+        with patch(
+            "products.ai_observability.backend.presentation.views.traces.api.load_trace_list",
+            return_value=lambda: SimpleNamespace(model_dump=lambda **_: {}),
+        ) as load:
+            response = self._get({"error": " Timed out: x ", "tool": "search", "failed_tool": "fetch"})
+
+        assert response.status_code == 200, response.content
+        selection = load.call_args.args[2]
+        assert (selection.error, selection.tool, selection.failed_tool) == (" Timed out: x ", "search", "fetch")
+
     @parameterized.expand(
         [
             ("bad cursor", {"cursor": "%%%"}),
@@ -351,6 +362,11 @@ class TestTraceListViewSet(ClickhouseTestMixin, APIBaseTest):
             ("limit too small", {"limit": 0}),
             ("unknown view", {"view": "slow"}),
             ("person id that is not a uuid", {"person_id": "not-a-uuid"}),
+            ("empty error scope", {"error": ""}),
+            ("whitespace-only error scope", {"error": "   "}),
+            ("empty tool scope", {"tool": ""}),
+            ("whitespace-only failed tool scope", {"failed_tool": " "}),
+            ("tool scope over the length cap", {"tool": "t" * 256}),
             (
                 "custom expression that fails in clickhouse",
                 {"properties": json.dumps([{"type": "hogql", "key": "toDateTime('not a date') > now()"}])},

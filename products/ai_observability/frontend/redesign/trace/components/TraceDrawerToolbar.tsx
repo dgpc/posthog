@@ -1,4 +1,4 @@
-import { IconChevronDown, IconExpand45, IconX } from '@posthog/icons'
+import { IconChevronDown, IconChevronLeft, IconExpand45, IconX } from '@posthog/icons'
 import { LemonButton } from '@posthog/lemon-ui'
 
 import { KeyboardShortcut } from 'lib/lemon-ui/KeyboardShortcut/KeyboardShortcut'
@@ -16,6 +16,8 @@ export interface TraceDrawerToolbarProps {
     fullPageHref: string
     fullPageInNewTab?: boolean
     onClose: () => void
+    /** For a trace opened from an entity drawer: returns to that drawer. */
+    back?: { label: string; onBack: () => void }
 }
 
 const NOT_IN_LIST_REASON = "This trace isn't in the list"
@@ -29,9 +31,21 @@ export function TraceDrawerToolbar({
     fullPageHref,
     fullPageInNewTab = false,
     onClose,
+    back,
 }: TraceDrawerToolbarProps): JSX.Element {
     return (
         <div className="flex min-w-0 flex-1 items-center gap-1">
+            {back && (
+                <LemonButton
+                    size="small"
+                    type="tertiary"
+                    icon={<IconChevronLeft />}
+                    onClick={back.onBack}
+                    data-attr="trace-drawer-back"
+                >
+                    {back.label}
+                </LemonButton>
+            )}
             {showNavigation && (
                 <>
                     <LemonButton

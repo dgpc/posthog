@@ -24,6 +24,7 @@ from posthog.models.group_type_mapping import get_group_types_for_project
 from .trace_expression_queries import (
     EVENTS_COLUMNS,
     TRACE_EVENT_NAMES,
+    error_message,
     grouped,
     names_session,
     not_impersonated,
@@ -74,10 +75,46 @@ def _escape_like_pattern(term: str) -> str:
     return term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
-def _person_scope(selection: TraceSelection) -> list[ast.Expr]:
-    if selection.person_id is None:
-        return []
-    return [parse_expr("person_id = {person_id}", placeholders={"person_id": ast.Constant(value=selection.person_id)})]
+def _named_in(property_name: str, name: str) -> ast.Expr:
+    return parse_expr(
+        """
+        event = '$ai_generation'
+        AND has(arrayFilter(x -> x != '', arrayMap(x -> trim(x), splitByChar(',', ifNull({names}, '')))), {name})
+        """,
+        placeholders={"names": ast.Field(chain=["properties", property_name]), "name": ast.Constant(value=name)},
+    )
+
+
+def _trace_scope_events(selection: TraceSelection) -> list[ast.Expr]:
+    events: list[ast.Expr] = []
+    if selection.person_id is not None:
+        events.append(
+            parse_expr("person_id = {person_id}", placeholders={"person_id": ast.Constant(value=selection.person_id)})
+        )
+    if selection.error is not None:
+        events.append(
+            parse_expr(
+                "{is_error} = 'true' AND {message} = {error}",
+                placeholders={
+                    "is_error": EVENTS_COLUMNS.is_error,
+                    "message": error_message(EVENTS_COLUMNS),
+                    "error": ast.Constant(value=selection.error),
+                },
+            )
+        )
+    if selection.tool is not None:
+        events.append(_named_in("$ai_tools_called", selection.tool))
+    if selection.failed_tool is not None:
+        events.append(_named_in("$ai_tool_errors", selection.failed_tool))
+    return events
+
+
+def _trace_scopes(selection: TraceSelection) -> list[ast.Expr]:
+    # The scopes test the grouped events and not each event read, because an event filter would drop the trace's other
+    # events and so change its totals and its place in the list.
+    return [
+        parse_expr("countIf({event}) > 0", placeholders={"event": event}) for event in _trace_scope_events(selection)
+    ]
 
 
 def _group_scope(selection: TraceSelection) -> list[ast.Expr]:
@@ -166,7 +203,6 @@ def _event_condition(team: Team, selection: TraceSelection) -> ast.Expr:
         exprs.extend(_filter_expr(team, prop) for prop in team.test_account_filters or [])
     if not selection.include_support_traces:
         exprs.append(not_impersonated())
-    exprs.extend(_person_scope(selection))
     exprs.extend(_group_scope(selection))
     if selection.session_id is not None:
         exprs.append(names_session(EVENTS_COLUMNS, [selection.session_id]))
@@ -193,6 +229,7 @@ def grouped_traces(team: Team, selection: TraceSelection, extra: dict[str, ast.E
         GROUP BY trace_id
         HAVING countIf(event IN {trace_events}) > 0
             AND countIf({filters}) > 0
+            AND {trace_scopes}
             AND first_timestamp <= {window_end}
             AND last_timestamp >= {window_start}
         """,
@@ -200,6 +237,7 @@ def grouped_traces(team: Team, selection: TraceSelection, extra: dict[str, ast.E
             "event_condition": _event_condition(team, selection),
             "trace_events": _events_in(TRACE_EVENT_NAMES),
             "filters": _all(_property_filters(team, selection)),
+            "trace_scopes": _all(_trace_scopes(selection)),
             "window_start": ast.Constant(value=selection.window.start),
             "window_end": ast.Constant(value=selection.window.end),
         },
