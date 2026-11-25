@@ -528,6 +528,7 @@ async fn test_team_null_counts_as_not_set_selects_live_and_batch_semantics() -> 
         .await
         .json::<Value>()
         .await?;
+    assert_eq!(batch_off["null_counts_as_not_set"], json!(false));
     let mut matched_off = matched_uuids(&batch_off);
     matched_off.sort();
     let mut expected_off = vec![null_person_uuid, set_person_uuid];
@@ -562,6 +563,7 @@ async fn test_team_null_counts_as_not_set_selects_live_and_batch_semantics() -> 
         .await
         .json::<Value>()
         .await?;
+    assert_eq!(batch_on["null_counts_as_not_set"], json!(true));
     assert_eq!(matched_uuids(&batch_on), vec![set_person_uuid]);
 
     let unpinned = send_batch_request(

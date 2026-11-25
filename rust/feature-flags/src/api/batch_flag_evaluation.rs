@@ -105,6 +105,7 @@ pub struct BatchFlagEvaluationResponse {
     pub errors_count: u64,
     /// Matching semantics used for this page.
     pub property_matching_version: i16,
+    pub null_counts_as_not_set: bool,
 }
 
 const DEFAULT_LIMIT: i64 = 1_000;
@@ -739,6 +740,7 @@ async fn handle_batch_flag_evaluation(
         next_cursor,
         errors_count,
         property_matching_version: team.property_matching_version.0,
+        null_counts_as_not_set: team.null_counts_as_not_set,
     })
 }
 

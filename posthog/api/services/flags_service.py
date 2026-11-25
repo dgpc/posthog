@@ -233,4 +233,10 @@ def batch_evaluate_flag_for_team(
             f"Feature flags service did not use property matching version {expected_property_matching_version} "
             f"while generating a cohort from feature flag '{flag_key}'."
         )
+    # A flags service version that predates the setting ignores the pin and omits the field.
+    if response_data.get("null_counts_as_not_set", False) != expected_null_counts_as_not_set:
+        raise PropertyMatchingVersionConflictError(
+            f"Feature flags service did not use null_counts_as_not_set={expected_null_counts_as_not_set} "
+            f"while generating a cohort from feature flag '{flag_key}'."
+        )
     return response_data

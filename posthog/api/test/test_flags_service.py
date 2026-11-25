@@ -82,6 +82,7 @@ class TestBatchEvaluateFlagForTeam(SimpleTestCase):
             "next_cursor": None,
             "errors_count": 0,
             "property_matching_version": 1,
+            "null_counts_as_not_set": null_counts_as_not_set,
         }
         mock_post.return_value = response
 
@@ -119,9 +120,15 @@ class TestBatchEvaluateFlagForTeam(SimpleTestCase):
 
         self.assertEqual(result, response_data)
 
+    @parameterized.expand(
+        [
+            ("property_matching_version", {"expected_property_matching_version": 2}),
+            ("null_counts_as_not_set", {"expected_null_counts_as_not_set": True}),
+        ]
+    )
     @override_settings(INTERNAL_REQUEST_TOKEN="secret")
     @patch("posthog.api.services.flags_service._FLAGS_SERVICE_SESSION.post")
-    def test_rejects_response_without_pinned_property_matching_version(self, mock_post):
+    def test_rejects_legacy_response_that_ignored_a_pin(self, _name, pin, mock_post):
         response = MagicMock()
         response.status_code = 200
         response.json.return_value = {"matched_person_uuids": [], "next_cursor": None, "errors_count": 0}
@@ -133,9 +140,9 @@ class TestBatchEvaluateFlagForTeam(SimpleTestCase):
                 project_id=1,
                 flag_key="my-flag",
                 expected_version=7,
-                expected_property_matching_version=2,
                 cursor=0,
                 limit=100,
+                **pin,
             )
 
     @override_settings(INTERNAL_REQUEST_TOKEN="secret")
