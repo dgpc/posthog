@@ -104,7 +104,8 @@ class TestAgentEgressGitWorker(TestCase):
     def lookup(self) -> tuple[AgentEgressRegistration, GitReadCredential] | None:
         return self.grants.lookup(**self.scope, repository="example/repo")
 
-    def test_existing_refresh_activity_rotates_the_live_execution_grant(self) -> None:
+    @parameterized.expand([("legacy", False), ("brokered", True)])
+    def test_existing_refresh_activity_rotates_the_live_execution_grant(self, _name: str, brokered: bool) -> None:
         self.assertTrue(self.publish())
         first = self.lookup()
         assert first is not None
@@ -117,7 +118,10 @@ class TestAgentEgressGitWorker(TestCase):
         self.github_client.assert_called_once()
         TaskRun.update_state_atomic(
             self.task_run.id,
-            updates={"agent_egress_probe": {"execution_id": str(self.execution_id), "publish_git_read_grant": True}},
+            updates={
+                "agent_egress_probe": {"execution_id": str(self.execution_id), "publish_git_read_grant": True},
+                "agent_egress_git_reads": brokered,
+            },
         )
         self.response.json.return_value = {
             "token": "synthetic-refreshed-token",
@@ -129,7 +133,7 @@ class TestAgentEgressGitWorker(TestCase):
             team_id=self.team.id,
             team_uuid=str(self.team.uuid),
             organization_id=str(self.team.organization_id),
-            github_integration_id=self.integration.id,
+            github_integration_id=None if brokered else self.integration.id,
             repository="example/repo",
             distinct_id="synthetic-worker",
             state=self.task_run.state,
@@ -150,7 +154,10 @@ class TestAgentEgressGitWorker(TestCase):
             outcome = ActivityEnvironment().run(
                 unwrap(refresh_sandbox_credentials), RefreshSandboxCredentialsInput(context=ctx, sandbox_id=sandbox.id)
             )
-        self.assertIn("github", outcome.refreshed_kinds)
+        self.assertEqual("github" in outcome.refreshed_kinds, not brokered)
+        if brokered:
+            sandbox.execute.assert_not_called()
+            sandbox.write_file.assert_not_called()
         refreshed = self.lookup()
         assert refreshed is not None
         self.assertNotEqual(first[0].git_read_grant_version, refreshed[0].git_read_grant_version)

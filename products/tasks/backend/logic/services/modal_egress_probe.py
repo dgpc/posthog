@@ -17,6 +17,7 @@ from modal.exception import (
 )
 from modal.stream_type import StreamType
 
+from products.tasks.backend.logic.services.agent_egress_git_setup import GIT_HELPER_PATH, git_credential_helper
 from products.tasks.backend.logic.services.modal_sandbox import ModalSandbox
 from products.tasks.backend.logic.services.sandbox import (
     SandboxConfig,
@@ -461,6 +462,25 @@ class ModalEgressProbe:
             "import os,sys; os.chmod(sys.argv[1],0o600); os.replace(sys.argv[1],sys.argv[2])",
             temporary,
             self.capability_path,
+        )
+
+    def configure_git_read(self, repository: str) -> None:
+        helper = git_credential_helper(
+            relay_name=self.relay_name, capability_path=self.capability_path, repository=repository.lower()
+        )
+        guest = self.sandbox._sandbox
+        guest.filesystem.write_text(helper, GIT_HELPER_PATH)
+        self._execute(guest, "chmod", "600", GIT_HELPER_PATH)
+        endpoint = f"http://{self.relay_name}:8080/v1/git/{repository.lower()}.git"
+        for key, value in (
+            (f"credential.{endpoint}.helper", ""),
+            (f"credential.{endpoint}.useHttpPath", "true"),
+            (f"http.{endpoint}.followRedirects", "false"),
+            (f"url.{endpoint}.insteadOf", f"https://github.com/{repository}.git"),
+        ):
+            self._execute(guest, "git", "config", "--global", "--replace-all", key, value)
+        self._execute(
+            guest, "git", "config", "--global", "--add", f"credential.{endpoint}.helper", f"!python3 {GIT_HELPER_PATH}"
         )
 
     def probe(self, *, count: int = 1, concurrency: int = 1) -> dict[int, int]:

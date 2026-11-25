@@ -814,6 +814,10 @@ class GitHubSandboxCredential:
 
     def refresh(self, sandbox: "SandboxBase", ctx: "TaskProcessingContext", task: Task) -> CredentialRefreshOutcome:
         refresh_agent_egress_git_grant(ctx, sandbox_id=sandbox.id)
+        if ctx.agent_egress_git_reads or (ctx.state or {}).get("agent_egress_git_reads"):
+            return CredentialRefreshOutcome(
+                self.kind, refreshed=False, next_refresh_seconds=DEFAULT_REFRESH_INTERVAL_SECONDS
+            )
         # A run that started on GitHub keeps this credential in its context after the task moves to
         # GitLab, and a GitLab sandbox must not get a GitHub token back.
         if task.repository_integration_id is not None:
@@ -1007,6 +1011,10 @@ class GitHubSandboxCredential:
 
 def build_sandbox_credentials(ctx: "TaskProcessingContext") -> list[SandboxCredential]:
     credentials: list[SandboxCredential] = []
-    if ctx.has_github_credentials:
+    if (
+        ctx.has_github_credentials
+        or ctx.agent_egress_git_reads
+        or (ctx.state or {}).get("agent_egress_git_reads") is True
+    ):
         credentials.append(GitHubSandboxCredential())
     return credentials

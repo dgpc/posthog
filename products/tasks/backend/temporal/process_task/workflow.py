@@ -35,7 +35,10 @@ from products.tasks.backend.temporal.metrics import (
     sandbox_runtime_label,
 )
 from products.tasks.backend.temporal.patches import ci_follow_up_actionable_gate
-from products.tasks.backend.temporal.process_task.activities.agent_egress import AgentEgressProbeInput
+from products.tasks.backend.temporal.process_task.activities.agent_egress import (
+    AgentEgressProbeInput,
+    await_agent_egress_git,
+)
 from products.tasks.backend.temporal.process_task.activities.get_pr_babysit_snapshot import (
     GetPrBabysitSnapshotInput,
     get_pr_babysit_snapshot,
@@ -1286,7 +1289,11 @@ class ProcessTaskWorkflow(PostHogWorkflow):
             if input.resumed_sandbox is None:
                 self._dev_stack_preview_enabled = self.context.dev_stack_preview_enabled
                 sandbox_id, sandbox_url, sandbox_connect_token = await self._provision_and_start_agent(input, run_id)
-                if workflow.patched("tasks-agent-egress-observation") and self.context.agent_egress_observation_config:
+                if (
+                    workflow.patched("tasks-agent-egress-observation")
+                    and self.context.agent_egress_observation_config
+                    and self._agent_egress_observation_task is None
+                ):
                     self._agent_egress_observation_task = asyncio.create_task(self._observe_egress(sandbox_id))
                 if self._agent_shadow_launched:
                     agent_shadow_task = asyncio.create_task(self._collect_agent_shadow_result(sandbox_id))
@@ -2217,9 +2224,32 @@ class ProcessTaskWorkflow(PostHogWorkflow):
                 used_snapshot = False
                 await self._emit_progress("sandbox", "completed", "Sandbox ready", "setup", wait=False)
 
+        if self.context.agent_egress_git_reads:
+            if used_snapshot:
+                raise ValueError("Git egress requires a fresh sandbox")
+            self._agent_egress_observation_task = asyncio.create_task(self._observe_egress(created.sandbox_id))
+            await workflow.execute_activity(
+                await_agent_egress_git,
+                AgentEgressProbeInput(
+                    config_path=self.context.agent_egress_observation_config or "",
+                    team_id=self.context.team_id,
+                    run_id=self.context.run_id,
+                    sandbox_id=created.sandbox_id,
+                    enrollment=True,
+                ),
+                start_to_close_timeout=timedelta(seconds=10),
+                schedule_to_close_timeout=timedelta(minutes=3),
+                retry_policy=RetryPolicy(
+                    initial_interval=timedelta(seconds=1),
+                    maximum_interval=timedelta(seconds=5),
+                    non_retryable_error_types=["ValueError"],
+                ),
+            )
+
         can_clone_without_integration = is_public_sandbox_repo(prepared.repository)
         has_clone_credentials = (
             self.context.has_github_credentials
+            or self.context.agent_egress_git_reads
             or can_clone_without_integration
             or (self.context.has_gitlab_credentials and workflow.patched("tasks-gitlab-clone-2026-11"))
         )
