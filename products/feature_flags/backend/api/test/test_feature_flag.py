@@ -5937,7 +5937,7 @@ class TestFeatureFlag(APIBaseTest, ClickhouseTestMixin):
                 True,
                 True,
                 status.HTTP_400_BAD_REQUEST,
-                "Realtime is off for cohort",
+                "Real-time is off for cohort",
             ),
         ]
     )

@@ -1546,7 +1546,7 @@ COHORT_NOT_READY_CODE = "cohort_not_ready"
 def _cohort_not_ready_error(cohort: Cohort) -> serializers.ValidationError:
     if cohort.cohort_type == CohortType.REALTIME and not cohort.realtime_enabled and has_realtime_state(cohort):
         return serializers.ValidationError(
-            f"Realtime is off for cohort {cohort.pk}. Turn it on from the cohort's page, and workflows can use the "
+            f"Real-time is off for cohort {cohort.pk}. Turn it on from the cohort's page, and workflows can use the "
             "cohort once it finishes calculating.",
             code=COHORT_NOT_READY_CODE,
         )
@@ -1559,8 +1559,8 @@ def _cohort_not_ready_error(cohort: Cohort) -> serializers.ValidationError:
             code=COHORT_NOT_READY_CODE,
         )
     return serializers.ValidationError(
-        f"Cohort {cohort.pk} isn't ready for realtime evaluation. "
-        f"Workflows can only use realtime cohorts that have finished calculating."
+        f"Cohort {cohort.pk} isn't ready for real-time evaluation. "
+        f"Workflows can only use real-time cohorts that have finished calculating."
     )
 
 
@@ -1583,7 +1583,7 @@ def validate_realtime_cohorts(cohort_ids: Iterable[int], team: Team, *, require_
             raise serializers.ValidationError(f"Cohort {cohort_id} doesn't exist in this environment.")
         if cohort.is_static:
             raise serializers.ValidationError(
-                f"Cohort {cohort_id} is a static cohort. Workflows can only use realtime cohorts."
+                f"Cohort {cohort_id} is a static cohort. Workflows can only use real-time cohorts."
             )
         if cohort.is_flag_compatible:
             continue

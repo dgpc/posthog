@@ -562,7 +562,7 @@ def _validate_behavioral_cohort_for_feature_flag(
             )
         if not cohort.realtime_enabled:
             raise serializers.ValidationError(
-                detail=f"Realtime is off for cohort '{cohort.name}'. Turn it on from the cohort's page, and feature flags can target the cohort once it's ready.",
+                detail=f"Real-time is off for cohort '{cohort.name}'. Turn it on from the cohort's page, and feature flags can target the cohort once it's ready.",
                 code=BEHAVIOURAL_COHORT_FOUND_ERROR_CODE,
             )
         raise serializers.ValidationError(
@@ -3554,7 +3554,7 @@ class EvaluationReasonSerializer(serializers.Serializer):
         allow_null=True,
         help_text=(
             "Human-readable explanation of the evaluation result. Carries the extra signal when the "
-            "reason code is coarse, for example a non-match decided by a behavioral or realtime cohort "
+            "reason code is coarse, for example a non-match decided by a behavioral or real-time cohort "
             "whose membership is not fully evaluated here, which can disagree with the cohort's member list."
         ),
     )
@@ -3755,7 +3755,7 @@ class FeatureFlagTestEvaluationResponseSerializer(serializers.Serializer):
         allow_null=True,
         help_text=(
             "Human-readable explanation of the evaluation result. Set when the reason code is coarse, "
-            "for example a non-match decided by a behavioral or realtime cohort whose membership is not "
+            "for example a non-match decided by a behavioral or real-time cohort whose membership is not "
             "fully evaluated here, which can disagree with the cohort's member list."
         ),
     )

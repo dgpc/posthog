@@ -95,7 +95,7 @@ describe('CohortFlagTargetingNotice', () => {
         await waitFor(() => {
             expect(screen.getByText('Viewed pricing this week')).toBeInTheDocument()
         })
-        expect(!!screen.queryByText('Turn on realtime')).toBe(turnOn)
+        expect(!!screen.queryByText('Turn on real-time')).toBe(turnOn)
         expect(!!screen.queryByText('See plan limits')).toBe(planLimits)
     })
 
@@ -144,7 +144,7 @@ describe('CohortFlagTargetingNotice', () => {
         })
         await renderNotice(readiness('off'))
 
-        fireEvent.click(await screen.findByText('Turn on realtime'))
+        fireEvent.click(await screen.findByText('Turn on real-time'))
 
         expect(await screen.findByText(/PostHog is preparing/)).toBeInTheDocument()
     })
@@ -154,7 +154,7 @@ describe('CohortFlagTargetingNotice', () => {
 
         await renderNotice(readiness('off'))
 
-        expect(await screen.findByText('Turn on realtime')).toBeInTheDocument()
+        expect(await screen.findByText('Turn on real-time')).toBeInTheDocument()
     })
 
     it('reads a cohort the shared model missed again when the tab comes back after its read failed', async () => {
@@ -172,14 +172,14 @@ describe('CohortFlagTargetingNotice', () => {
         setPageHidden(true)
         setPageHidden(false)
 
-        expect(await screen.findByText('Turn on realtime')).toBeInTheDocument()
+        expect(await screen.findByText('Turn on real-time')).toBeInTheDocument()
     })
 
     it('lists a cohort once when the set names it twice', async () => {
         await renderNotice(readiness('off'), [cohortCondition(1), cohortCondition('1')])
 
         await waitFor(() => {
-            expect(screen.getAllByText('Turn on realtime')).toHaveLength(1)
+            expect(screen.getAllByText('Turn on real-time')).toHaveLength(1)
         })
     })
 })
