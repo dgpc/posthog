@@ -23,7 +23,13 @@ from ..logic.diagnostics.error_groups import (
     ErrorOrder as ErrorOrder,
     ErrorView as ErrorView,
 )
-from ..logic.diagnostics.trends import change_label, error_change_tone
+from ..logic.diagnostics.tool_group_queries import ToolPageRead, has_any_tool_call, load_tool_group, load_tool_page
+from ..logic.diagnostics.tool_groups import (
+    ToolGroupRow,
+    ToolOrder as ToolOrder,
+    ToolView as ToolView,
+)
+from ..logic.diagnostics.trends import change_label, error_change_tone, failure_rate
 from ..logic.traces.lookback import has_no_lookback, seen_before
 from ..logic.traces.trace_metrics import bucket_size_for, bucket_starts, has_too_many_buckets
 from ..logic.traces.trace_selection import (
@@ -40,6 +46,11 @@ from .diagnostics_contracts import (
     ErrorListItem,
     ErrorPage as ErrorPage,
     ErrorTrend,
+    ToolFailureState,
+    ToolGroupDetail,
+    ToolListCounts,
+    ToolListItem,
+    ToolPage as ToolPage,
 )
 
 ERROR_FIRST_SEEN_MAX_KEYS: Final = 100
@@ -54,6 +65,10 @@ class ErrorNotFoundError(Exception):
 
 
 class ErrorFirstSeenTooManyKeysError(ValueError):
+    pass
+
+
+class ToolNotFoundError(Exception):
     pass
 
 
@@ -116,6 +131,46 @@ def load_error_first_seen(
     )
 
 
+def load_tool_list(
+    team: Team,
+    user: User | None,
+    selection: TraceSelection,
+    *,
+    search: str | None,
+    view: ToolView | None,
+    order: ToolOrder,
+    page: PageRequest,
+) -> Callable[[], ToolPage]:
+    """Reads a page of the tools the selection's generations call, and returns the step that builds it. `search`
+    narrows the tools and the counts, and `view` only the page. Raises the range errors of `load_error_list`.
+
+    On the first page of a selection with no tool, a second read checks whether any generation called a tool from the
+    lookback start, so the client can tell a quiet range from a project that sends no tool calls. The step runs no
+    ClickHouse query.
+    """
+    zoned = _readable(team, selection)
+    read = load_tool_page(team, user, zoned, search=search, view=view, order=order, page=page)
+    nothing_captured = page.offset == 0 and read.counts.total == 0 and not has_any_tool_call(team, user, zoned)
+    return lambda: _to_tool_page(read, nothing_captured)
+
+
+def get_tool(team: Team, user: User | None, selection: TraceSelection, key: str) -> Callable[[], ToolGroupDetail]:
+    """Reads the tool `key` names over the selection, with its series over the previous period, and returns the step
+    that builds it. Raises `MalformedEntityKeyError` for a key that names no tool, `ToolNotFoundError` when no
+    generation in the selection calls the tool, and the range errors of `load_error_list`. The step runs no ClickHouse
+    query."""
+    name = decode_entity_key(key)
+    zoned = _readable(team, selection)
+    detail = load_tool_group(team, user, zoned, name)
+    if detail is None:
+        raise ToolNotFoundError(key)
+    return lambda: ToolGroupDetail(
+        item=_to_tool_item(detail.row, detail.total_traces),
+        bucket_starts=bucket_starts(zoned.window, bucket_size_for(zoned.window)),
+        previous_series=list(detail.previous_series),
+    )
+
+
 def _readable(team: Team, selection: TraceSelection) -> TraceSelection:
     # Buckets start at midnight in the project's zone, so every step works on the window in that zone.
     zone = team.timezone_info
@@ -166,3 +221,36 @@ def _to_list_item(row: ErrorGroupRow) -> ErrorListItem:
         last_seen=row.last_seen,
         series=list(row.series),
     )
+
+
+def _to_tool_page(read: ToolPageRead, nothing_captured: bool) -> ToolPage:
+    return ToolPage(
+        page=Page(results=[_to_tool_item(row, read.total_traces) for row in read.rows], count=read.count),
+        counts=ToolListCounts(total=read.counts.total, failing=read.counts.failing),
+        bucket_starts=list(read.bucket_starts),
+        nothing_captured=nothing_captured,
+    )
+
+
+def _to_tool_item(row: ToolGroupRow, total_traces: int) -> ToolListItem:
+    rate = failure_rate(row.results, row.failures)
+    return ToolListItem(
+        key=encode_entity_key(row.name),
+        name=row.name,
+        calls=row.calls,
+        change_label=change_label(row.calls, row.previous_calls),
+        change_tone=TraceMetricChangeTone.NEUTRAL,
+        traces=row.traces,
+        trace_share=_share(row.traces, total_traces),
+        failure_rate=rate,
+        failures=None if rate is None else row.failures,
+        failure_state=ToolFailureState.NOT_CAPTURED if rate is None else ToolFailureState.CAPTURED,
+        is_failing=row.is_failing,
+        only_tool_share=_share(row.only_tool_calls, row.calls),
+        last_seen=row.last_seen,
+        series=list(row.series),
+    )
+
+
+def _share(part: int, whole: int) -> float:
+    return part / whole if whole else 0.0

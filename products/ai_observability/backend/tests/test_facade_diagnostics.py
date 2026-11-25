@@ -10,17 +10,26 @@ from parameterized import parameterized
 from posthog.paging import PageRequest
 
 from products.ai_observability.backend.facade import diagnostics
-from products.ai_observability.backend.facade.diagnostics_contracts import ErrorFirstSeen, ErrorListCounts, ErrorTrend
+from products.ai_observability.backend.facade.diagnostics_contracts import (
+    ErrorFirstSeen,
+    ErrorListCounts,
+    ErrorTrend,
+    ToolFailureState,
+    ToolListCounts,
+)
 from products.ai_observability.backend.logic.diagnostics.entity_keys import encode_entity_key
 from products.ai_observability.backend.logic.traces.lookback import LOOKBACK
 from products.ai_observability.backend.logic.traces.trace_selection import TraceSelection, TraceWindow
 
 from .logic.diagnostics.test_error_group_queries import DAY, PERSON_A, _flagged
+from .logic.diagnostics.test_tool_group_queries import _generation, _repeated
 from .logic.traces.test_trace_selection_queries import at, seed
 
 TIMED_OUT = "Request timed out after <n> ms"
 SCHEMA_REJECTED = "Tool schema rejected by provider"
 REFUSED = "Upstream refused the request"
+FETCH_PAGE = "fetch_page"
+LOOKUP = "lookup"
 
 
 def _bucket(hour: int) -> datetime:
@@ -164,6 +173,109 @@ class TestErrorsFacade(ClickhouseTestMixin, BaseTest):
             diagnostics.load_error_first_seen(self.team, self.user, self.selection, keys)
 
 
+class TestToolsFacade(ClickhouseTestMixin, BaseTest):
+    def setUp(self) -> None:
+        super().setUp()
+        self.team.timezone = "Asia/Kolkata"
+        self.team.save()
+        self.selection = TraceSelection(window=TraceWindow(start=at(0), end=at(120)))
+
+    def _seed_captured_and_not_captured(self) -> None:
+        seed(
+            self.team,
+            [
+                _generation(10, "fetch-0", called=FETCH_PAGE),
+                _generation(11, "fetch-0", results=_repeated(FETCH_PAGE, 20), errors=FETCH_PAGE),
+                _generation(20, "fetch-1", called=FETCH_PAGE),
+                _generation(30, "fetch-2", called=f"{FETCH_PAGE},{LOOKUP}"),
+                _generation(-100, "fetch-before", called=FETCH_PAGE),
+                _generation(-90, "fetch-before", called=FETCH_PAGE),
+                _generation(80, "lookup-0", called=LOOKUP),
+                _generation(50, "no-tools-0"),
+            ],
+        )
+
+    def _list(self, *, offset: int = 0) -> diagnostics.ToolPage:
+        return diagnostics.load_tool_list(
+            self.team,
+            self.user,
+            self.selection,
+            search=None,
+            view=None,
+            order=diagnostics.ToolOrder.CALLS,
+            page=PageRequest(limit=50, offset=offset),
+        )()
+
+    def test_list_builds_a_page_of_tools_with_shares_and_failure_states(self) -> None:
+        self._seed_captured_and_not_captured()
+
+        page = self._list()
+
+        assert page.page.count == 2
+        captured, not_captured = page.page.results
+        assert (
+            captured.name,
+            captured.change_label,
+            captured.trace_share,
+            captured.failure_rate,
+            captured.failures,
+            captured.failure_state,
+            captured.is_failing,
+            captured.only_tool_share,
+        ) == (FETCH_PAGE, "+50%", 0.6, 0.05, 1, ToolFailureState.CAPTURED, True, 2 / 3)
+        assert not_captured.model_dump(by_alias=True) == {
+            "key": encode_entity_key(LOOKUP),
+            "name": LOOKUP,
+            "calls": 2,
+            "changeLabel": "was 0",
+            "changeTone": "neutral",
+            "traces": 2,
+            "traceShare": 0.4,
+            "failureRate": None,
+            "failures": None,
+            "failureState": "not_captured",
+            "isFailing": False,
+            "onlyToolShare": 0.5,
+            "lastSeen": at(80),
+            "series": [0, 2, 0],
+        }
+        assert page.counts == ToolListCounts(total=2, failing=1)
+        assert page.bucket_starts == [_bucket(0), _bucket(1), _bucket(2)]
+        assert page.nothing_captured is False
+
+    @parameterized.expand([("called_in_the_lookback", -5 * DAY, False), ("called_past_the_lookback", -40 * DAY, True)])
+    def test_nothing_captured_only_when_no_tool_was_called_since_the_lookback_start(
+        self, _name: str, minute: int, expected: bool
+    ) -> None:
+        seed(self.team, [_generation(minute, "lookup-before", called=LOOKUP)])
+
+        page = self._list()
+
+        assert (page.page.count, page.nothing_captured) == (0, expected)
+
+    def test_get_tool_builds_the_list_item_with_both_periods_series(self) -> None:
+        self._seed_captured_and_not_captured()
+
+        detail = diagnostics.get_tool(self.team, self.user, self.selection, encode_entity_key(FETCH_PAGE))()
+
+        assert detail.item == self._list().page.results[0]
+        assert detail.item.series == [2, 1, 0]
+        assert detail.bucket_starts == [_bucket(0), _bucket(1), _bucket(2)]
+        assert detail.previous_series == [1, 1, 0]
+
+    @parameterized.expand(
+        [
+            ("never_called", encode_entity_key("never_called"), diagnostics.ToolNotFoundError),
+            ("malformed", "not a key!", diagnostics.MalformedEntityKeyError),
+        ]
+    )
+    def test_get_tool_refuses_a_key_with_no_tool(self, _name: str, key: str, error: type[Exception]) -> None:
+        self._seed_captured_and_not_captured()
+
+        with pytest.raises(error):
+            diagnostics.get_tool(self.team, self.user, self.selection, key)
+
+
 _LOADERS: list[tuple[str, Callable[..., Any]]] = [
     (
         "list",
@@ -184,6 +296,19 @@ _LOADERS: list[tuple[str, Callable[..., Any]]] = [
             team, user, selection, [encode_entity_key("E")]
         ),
     ),
+    (
+        "tool_list",
+        lambda team, user, selection: diagnostics.load_tool_list(
+            team,
+            user,
+            selection,
+            search=None,
+            view=None,
+            order=diagnostics.ToolOrder.CALLS,
+            page=PageRequest(limit=50),
+        ),
+    ),
+    ("tool_detail", lambda team, user, selection: diagnostics.get_tool(team, user, selection, encode_entity_key("T"))),
 ]
 _REFUSED_WINDOWS: list[tuple[str, TraceWindow, type[Exception]]] = [
     (
@@ -199,7 +324,7 @@ _REFUSED_WINDOWS: list[tuple[str, TraceWindow, type[Exception]]] = [
 ]
 
 
-class TestErrorsFacadeRefusals(BaseTest):
+class TestDiagnosticsFacadeRefusals(BaseTest):
     @parameterized.expand(
         [
             (f"{loader_name}_{window_name}", load, window, error)

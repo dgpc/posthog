@@ -8,8 +8,8 @@ from posthog.api.mixins import ValidatedRequest, validated_request
 
 from ...facade import diagnostics
 from ...facade.diagnostics_contracts import ErrorFirstSeenList
-from .diagnostics_resource import DiagnosticsViewSet
-from .errors import RANGE_TOO_LONG_RESPONSE, SCOPE_RESPONSE, ErrorSelectionQuerySerializer
+from .diagnostics_resource import RANGE_TOO_LONG_RESPONSE, SCOPE_RESPONSE, DiagnosticsViewSet
+from .errors import ErrorSelectionQuerySerializer
 from .trace_resource import THROTTLED_RESPONSE
 
 

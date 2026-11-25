@@ -1,4 +1,3 @@
-from collections.abc import Mapping, Sequence
 from datetime import datetime
 
 from posthog.dataclasses import frozen
@@ -44,13 +43,6 @@ class ErrorCountsRow:
     increasing: int
     decreasing: int
     new: int
-
-
-def series_of(counts: Mapping[int, int], starts: Sequence[datetime]) -> tuple[int, ...]:
-    """The count in each bucket, from counts keyed by each bucket's start in Unix seconds. A start with no count had no
-    occurrence."""
-    # Unix seconds name one instant in any zone, so the two buckets of the hour a clock goes back stay apart.
-    return tuple(counts.get(int(start.timestamp()), 0) for start in starts)
 
 
 def first_seen_of(earliest: datetime, lookback_start: datetime) -> datetime | None:
