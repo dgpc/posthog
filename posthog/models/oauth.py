@@ -630,19 +630,6 @@ class OAuthApplication(ModelActivityMixin, AbstractApplication):  # type: ignore
             return False
         return super().allows_grant_type(*grant_types)
 
-    def redirect_uri_allowed(self, uri: str) -> bool:
-        return super().redirect_uri_allowed(uri) or self._is_own_proxy_callback(uri)
-
-    def _is_own_proxy_callback(self, uri: str) -> bool:
-        # The OAuth proxy reads the client_id from this path to refuse a code issued to another client,
-        # so the path must never be accepted for any client but the one it names.
-        registered = set(self.redirect_uris.split())
-        return any(
-            uri == f"{callback}{self.client_id}/"
-            for callback in settings.OAUTH_PROXY_CALLBACK_URLS
-            if callback in registered
-        )
-
     def get_allowed_schemes(self) -> list[str]:
         """Extract unique schemes from the application's registered redirect URIs, filtering out blocked schemes."""
         blocked_schemes = self.get_blocked_schemes()

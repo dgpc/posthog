@@ -6186,47 +6186,6 @@ class TestLocalhostLoopbackRedirectUri(APIBaseTest):
         self.assertNotEqual(response.status_code, status.HTTP_200_OK)
 
 
-@override_settings(OAUTH_PROXY_CALLBACK_URLS=["https://proxy.example/oauth/callback/"])
-class TestOAuthProxyClientCallbackRedirectUri(SimpleTestCase):
-    @parameterized.expand(
-        [
-            (
-                "own_client_route",
-                "https://proxy.example/oauth/callback/",
-                "https://proxy.example/oauth/callback/app_a/",
-                True,
-            ),
-            ("shared_route", "https://proxy.example/oauth/callback/", "https://proxy.example/oauth/callback/", True),
-            (
-                "other_client_route",
-                "https://proxy.example/oauth/callback/",
-                "https://proxy.example/oauth/callback/app_b/",
-                False,
-            ),
-            (
-                "shared_route_not_registered",
-                "https://app.example/cb",
-                "https://proxy.example/oauth/callback/app_a/",
-                False,
-            ),
-            (
-                "callback_of_unlisted_host",
-                "https://other.example/oauth/callback/",
-                "https://other.example/oauth/callback/app_a/",
-                False,
-            ),
-        ]
-    )
-    def test_proxy_callback_is_bound_to_the_requesting_client(
-        self, _name: str, registered: str, requested: str, allowed: bool
-    ) -> None:
-        app = OAuthApplication(client_id="app_a", redirect_uris=registered)
-
-        result = OAuthValidator().validate_redirect_uri("app_a", requested, SimpleNamespace(client=app))
-
-        assert result is allowed
-
-
 class TestOAuthAuthorizationServerMetadata(APIBaseTest):
     """Tests for OAuth 2.0 Authorization Server Metadata (RFC 8414)."""
 
