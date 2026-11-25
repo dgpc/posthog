@@ -15,6 +15,8 @@ use crate::producers::ProducerName;
 use crate::sinks::producer::KafkaProducer;
 use crate::sinks::registry::{OutputTable, OutputTarget};
 
+pub const ARMING_VAR: &str = "CAPTURE_ANALYTICS_KAFKA_EMERGENCY_FALLBACK";
+pub const ARMING_VALUE: &str = "FALLBACK-TO-BACKUP-KAFKA-NOW";
 pub const CHECK_VAR: &str = "CAPTURE_ANALYTICS_KAFKA_EMERGENCY_FALLBACK_CHECK";
 pub const FALLBACK_BROKERS_VAR: &str = "KAFKA_FALLBACK_PRODUCER_METADATA_BROKER_LIST";
 
@@ -26,28 +28,55 @@ pub enum CheckMode {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FallbackSettings {
+    pub armed: bool,
     pub check: CheckMode,
 }
 
 impl FallbackSettings {
+    pub fn live(&self) -> Target {
+        if self.armed {
+            Target::Fallback
+        } else {
+            Target::Primary
+        }
+    }
+
     pub fn fallback_gates_liveness(&self) -> bool {
-        self.check == CheckMode::Strict
+        !self.armed && self.check == CheckMode::Strict
     }
 
     pub fn from_config(config: &Config) -> anyhow::Result<Option<Self>> {
+        let arming = config.kafka_emergency_fallback.as_deref();
         let check = config.kafka_emergency_fallback_check.as_deref();
         if config.capture_mode != CaptureMode::Events {
-            if check.is_some_and(|v| !v.is_empty()) {
+            if [arming, check]
+                .iter()
+                .any(|v| v.is_some_and(|v| !v.is_empty()))
+            {
                 warn!(
                     capture_mode = config.capture_mode.as_tag(),
-                    "{CHECK_VAR} applies only to CAPTURE_MODE=events; ignored"
+                    "{ARMING_VAR} and {CHECK_VAR} apply only to CAPTURE_MODE=events; ignored"
                 );
             }
             return Ok(None);
         }
         Ok(Some(Self {
+            armed: parse_arming(arming)?,
             check: parse_check(check)?,
         }))
+    }
+}
+
+/// Any other value refuses boot, so a typo is a crashloop an operator sees,
+/// not a switch they think happened.
+pub fn parse_arming(raw: Option<&str>) -> anyhow::Result<bool> {
+    match raw {
+        None | Some("") => Ok(false),
+        Some(ARMING_VALUE) => Ok(true),
+        Some(other) => anyhow::bail!(
+            "invalid {ARMING_VAR}={other:?}: leave it unset or empty for normal operation, \
+             or set it to exactly {ARMING_VALUE:?} to publish to the fallback cluster"
+        ),
     }
 }
 
@@ -109,10 +138,16 @@ pub enum OnCheckFailure {
     RefuseBoot,
 }
 
+/// An idle primary only warns: arming means its cluster is degraded, and its
+/// failure must not block the switch.
 pub fn on_check_failure(target: Target, settings: FallbackSettings) -> OnCheckFailure {
-    match (target, settings.check) {
-        (Target::Fallback, CheckMode::Strict) => OnCheckFailure::RefuseBoot,
-        (Target::Fallback, CheckMode::Warn) | (Target::Primary, _) => OnCheckFailure::Warn,
+    match (target, settings.armed, settings.check) {
+        (Target::Fallback, true, _) | (Target::Fallback, false, CheckMode::Strict) => {
+            OnCheckFailure::RefuseBoot
+        }
+        (Target::Fallback, false, CheckMode::Warn) | (Target::Primary, _, _) => {
+            OnCheckFailure::Warn
+        }
     }
 }
 
@@ -121,9 +156,13 @@ pub const OUTPUT_TOPIC_READY: &str = "capture_kafka_output_topic_ready";
 const TOPIC_CHECK_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub async fn run_boot_checks<P: KafkaProducer + 'static>(
+    primary: &OutputTable<Arc<P>>,
     secondary: &OutputTable<Arc<P>>,
     settings: FallbackSettings,
 ) -> anyhow::Result<()> {
+    if settings.armed {
+        check_target(primary, Target::Primary, settings).await?;
+    }
     check_target(secondary, Target::Fallback, settings).await
 }
 
@@ -167,6 +206,10 @@ async fn check_target<P: KafkaProducer + 'static>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ordering::OrderingGuarantee;
+    use crate::outputs::{Output, PreparedEvent, PublishPrepared};
+    use crate::pipeline::Address;
+    use crate::sinks::kafka::KafkaSinkBase;
     use crate::sinks::producer::MockKafkaProducer;
     use crate::sinks::registry::test_outputs;
     use rstest::rstest;
@@ -176,6 +219,33 @@ mod tests {
             .iter()
             .map(|(k, v)| (k.to_string(), v.to_string()))
             .collect()
+    }
+
+    #[rstest]
+    #[case::unset(None, false)]
+    #[case::empty(Some(""), false)]
+    #[case::sentinel(Some(ARMING_VALUE), true)]
+    fn arming_accepts_only_unset_empty_or_the_sentinel(
+        #[case] raw: Option<&str>,
+        #[case] armed: bool,
+    ) {
+        assert_eq!(parse_arming(raw).unwrap(), armed);
+    }
+
+    #[rstest]
+    #[case("1")]
+    #[case("true")]
+    #[case("yes")]
+    #[case(" ")]
+    #[case(" FALLBACK-TO-BACKUP-KAFKA-NOW")]
+    #[case("FALLBACK-TO-BACKUP-KAFKA-NOW\n")]
+    #[case("fallback-to-backup-kafka-now")]
+    #[case("FALLBACK-TO-BACKUP-KAFKA")]
+    fn any_other_arming_value_refuses_boot(#[case] raw: &str) {
+        let err = parse_arming(Some(raw)).unwrap_err().to_string();
+
+        assert!(err.contains(ARMING_VAR), "{err}");
+        assert!(err.contains(ARMING_VALUE), "{err}");
     }
 
     #[rstest]
@@ -193,23 +263,26 @@ mod tests {
         assert!(err.contains(CHECK_VAR), "{err}");
     }
 
-    fn config(mode: &str, check: &str) -> Config {
+    fn config(mode: &str, arming: &str, check: &str) -> Config {
         envconfig::Envconfig::init_from_hashmap(&env(&[
             ("REDIS_URL", "redis://localhost:6379/"),
             ("CAPTURE_MODE", mode),
+            (ARMING_VAR, arming),
             (CHECK_VAR, check),
         ]))
         .unwrap()
     }
 
     #[test]
-    fn settings_read_the_check_variable_on_events_pods() {
-        let settings = FallbackSettings::from_config(&config("events", "strict"))
+    fn settings_read_their_variables_on_events_pods() {
+        let settings = FallbackSettings::from_config(&config("events", ARMING_VALUE, "strict"))
             .unwrap()
             .unwrap();
+        assert_eq!(settings.live(), Target::Fallback);
         assert_eq!(settings.check, CheckMode::Strict);
 
-        assert!(FallbackSettings::from_config(&config("events", "bogus")).is_err());
+        assert!(FallbackSettings::from_config(&config("events", "true", "")).is_err());
+        assert!(FallbackSettings::from_config(&config("events", "", "bogus")).is_err());
     }
 
     #[rstest]
@@ -218,7 +291,7 @@ mod tests {
     #[case("import")]
     fn other_modes_never_parse_the_fallback_settings(#[case] mode: &str) {
         assert_eq!(
-            FallbackSettings::from_config(&config(mode, "bogus")).unwrap(),
+            FallbackSettings::from_config(&config(mode, "not-the-sentinel", "bogus")).unwrap(),
             None
         );
     }
@@ -292,37 +365,62 @@ mod tests {
     }
 
     #[rstest]
-    #[case::warn(Target::Fallback, CheckMode::Warn, OnCheckFailure::Warn)]
-    #[case::strict(Target::Fallback, CheckMode::Strict, OnCheckFailure::RefuseBoot)]
+    #[case::idle_warn(Target::Fallback, false, CheckMode::Warn, OnCheckFailure::Warn)]
+    #[case::idle_strict(Target::Fallback, false, CheckMode::Strict, OnCheckFailure::RefuseBoot)]
+    #[case::armed_warn(Target::Fallback, true, CheckMode::Warn, OnCheckFailure::RefuseBoot)]
+    #[case::armed_strict(Target::Fallback, true, CheckMode::Strict, OnCheckFailure::RefuseBoot)]
+    #[case::idle_primary_warn(Target::Primary, true, CheckMode::Warn, OnCheckFailure::Warn)]
+    #[case::idle_primary_strict(Target::Primary, true, CheckMode::Strict, OnCheckFailure::Warn)]
     fn check_failure_matrix(
         #[case] target: Target,
+        #[case] armed: bool,
         #[case] check: CheckMode,
         #[case] expected: OnCheckFailure,
     ) {
         assert_eq!(
-            on_check_failure(target, FallbackSettings { check }),
+            on_check_failure(target, FallbackSettings { armed, check }),
             expected
         );
     }
 
-    async fn check(missing_topics: &[&str], check: CheckMode) -> anyhow::Result<()> {
-        let producer =
-            Arc::new(MockKafkaProducer::new().with_missing_topics(missing_topics.iter().copied()));
-        let secondary = secondary_table(&test_outputs(), &HashMap::new())
+    struct Missing<'a> {
+        on_primary: &'a [&'a str],
+        on_fallback: &'a [&'a str],
+    }
+
+    fn missing_on_fallback<'a>(topics: &'a [&'a str]) -> Missing<'a> {
+        Missing {
+            on_primary: &[],
+            on_fallback: topics,
+        }
+    }
+
+    async fn check(missing: Missing<'_>, armed: bool, check: CheckMode) -> anyhow::Result<()> {
+        let cluster = |topics: &[&str]| {
+            Arc::new(MockKafkaProducer::new().with_missing_topics(topics.iter().copied()))
+        };
+        let (primary_producer, fallback_producer) =
+            (cluster(missing.on_primary), cluster(missing.on_fallback));
+        let primary = test_outputs();
+        let secondary = secondary_table(&primary, &HashMap::new())
             .unwrap()
-            .map_producers(|_| Arc::clone(&producer));
-        run_boot_checks(&secondary, FallbackSettings { check }).await
+            .map_producers(|_| Arc::clone(&fallback_producer));
+        let primary = primary.map_producers(|_| Arc::clone(&primary_producer));
+        run_boot_checks(&primary, &secondary, FallbackSettings { armed, check }).await
     }
 
     #[rstest]
-    #[case::warn(CheckMode::Warn, true)]
-    #[case::strict(CheckMode::Strict, false)]
+    #[case::idle_warn(false, CheckMode::Warn, true)]
+    #[case::idle_strict(false, CheckMode::Strict, false)]
+    #[case::armed_warn(true, CheckMode::Warn, false)]
+    #[case::armed_strict(true, CheckMode::Strict, false)]
     #[tokio::test]
     async fn a_missing_fallback_topic_warns_or_refuses_boot(
+        #[case] armed: bool,
         #[case] mode: CheckMode,
         #[case] boots: bool,
     ) {
-        let result = check(&["heatmaps"], mode).await;
+        let result = check(missing_on_fallback(&["heatmaps"]), armed, mode).await;
 
         assert_eq!(result.is_ok(), boots, "{result:?}");
         if let Err(err) = result {
@@ -335,11 +433,23 @@ mod tests {
     }
 
     #[rstest]
-    #[case(CheckMode::Warn)]
-    #[case(CheckMode::Strict)]
+    #[case(false, CheckMode::Warn)]
+    #[case(false, CheckMode::Strict)]
+    #[case(true, CheckMode::Warn)]
+    #[case(true, CheckMode::Strict)]
     #[tokio::test]
-    async fn a_complete_fallback_passes_every_mode(#[case] mode: CheckMode) {
-        check(&[], mode).await.unwrap();
+    async fn a_complete_fallback_passes_every_mode(#[case] armed: bool, #[case] mode: CheckMode) {
+        check(missing_on_fallback(&[]), armed, mode).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_missing_topic_on_the_idle_primary_does_not_block_the_switch() {
+        let missing = Missing {
+            on_primary: &["events_plugin_ingestion", "heatmaps"],
+            on_fallback: &[],
+        };
+
+        check(missing, true, CheckMode::Strict).await.unwrap();
     }
 
     #[tokio::test]
@@ -348,7 +458,9 @@ mod tests {
         let snapshotter = recorder.snapshotter();
         let _guard = metrics::set_default_local_recorder(&recorder);
 
-        check(&["heatmaps"], CheckMode::Warn).await.unwrap();
+        check(missing_on_fallback(&["heatmaps"]), false, CheckMode::Warn)
+            .await
+            .unwrap();
 
         let mut not_ready: Vec<(String, f64)> = snapshotter
             .snapshot()
@@ -373,5 +485,142 @@ mod tests {
         not_ready.sort_by(|a, b| a.0.cmp(&b.0));
 
         assert_eq!(not_ready, vec![("HEATMAPS".to_string(), 0.0)]);
+    }
+    struct RouteCase {
+        address: Address,
+        primary_topic: &'static str,
+        fallback_topic: &'static str,
+    }
+
+    fn analytics_family_routes() -> Vec<RouteCase> {
+        use crate::pipeline::{AiLane, AnalyticsLane, BasicLane, PipelineLane};
+        let route = |address, primary_topic, fallback_topic| RouteCase {
+            address,
+            primary_topic,
+            fallback_topic,
+        };
+        vec![
+            route(
+                Address::Lane(PipelineLane::Analytics(AnalyticsLane::Main)),
+                "events_plugin_ingestion",
+                "ws_events",
+            ),
+            route(
+                Address::Lane(PipelineLane::Analytics(AnalyticsLane::Overflow)),
+                "events_plugin_ingestion_overflow",
+                "events_plugin_ingestion_overflow",
+            ),
+            route(
+                Address::Lane(PipelineLane::Analytics(AnalyticsLane::Historical)),
+                "events_plugin_ingestion_historical",
+                "events_plugin_ingestion_historical",
+            ),
+            route(
+                Address::Lane(PipelineLane::Heatmaps(BasicLane::Main)),
+                "heatmaps",
+                "heatmaps",
+            ),
+            route(
+                Address::Lane(PipelineLane::Warnings(BasicLane::Main)),
+                "client_ingestion_warning",
+                "client_ingestion_warning",
+            ),
+            route(
+                Address::Lane(PipelineLane::ErrorTracking(BasicLane::Main)),
+                "error_tracking_events",
+                "error_tracking_events",
+            ),
+            route(
+                Address::Lane(PipelineLane::Ai(AiLane::Main)),
+                "ai_events",
+                "ws_ai",
+            ),
+            route(
+                Address::Lane(PipelineLane::Ai(AiLane::Overflow)),
+                "ai_events_overflow",
+                "ai_events_overflow",
+            ),
+            route(Address::Dlq, "events_plugin_ingestion_dlq", "ws_dlq"),
+            route(
+                Address::Custom("admin_topic".to_string()),
+                "admin_topic",
+                "admin_topic",
+            ),
+        ]
+    }
+
+    #[rstest]
+    #[case::normal(Target::Primary)]
+    #[case::armed(Target::Fallback)]
+    #[tokio::test]
+    async fn every_address_publishes_to_the_live_targets_topic(#[case] live: Target) {
+        let primary_table = test_outputs();
+        let secondary_table = secondary_table(
+            &primary_table,
+            &env(&[
+                ("CAPTURE_OUTPUT_ANALYTICS_MAIN_SECONDARY_TOPIC", "ws_events"),
+                ("CAPTURE_OUTPUT_AI_MAIN_SECONDARY_TOPIC", "ws_ai"),
+                ("CAPTURE_OUTPUT_DLQ_SECONDARY_TOPIC", "ws_dlq"),
+            ]),
+        )
+        .unwrap();
+        let (primary, fallback) = (MockKafkaProducer::new(), MockKafkaProducer::new());
+        let output = Output::select(
+            Output::single(KafkaSinkBase::with_producer(primary.clone(), primary_table)),
+            Output::single(KafkaSinkBase::with_producer(
+                fallback.clone(),
+                secondary_table,
+            )),
+            live,
+        );
+        let cases = analytics_family_routes();
+        let events = cases
+            .iter()
+            .map(|case| PreparedEvent {
+                uuid: uuid::Uuid::now_v7(),
+                address: case.address.clone(),
+                partition_key: "token:user".to_string(),
+                ordering: OrderingGuarantee::PerDistinctId,
+                payload: bytes::Bytes::from_static(b"{}"),
+                headers: common_types::CapturedEventHeaders {
+                    token: Some("token".to_string()),
+                    distinct_id: Some("user".to_string()),
+                    session_id: None,
+                    timestamp: None,
+                    event: Some("event".to_string()),
+                    uuid: None,
+                    now: None,
+                    force_disable_person_processing: None,
+                    historical_migration: None,
+                    skip_heatmap_processing: None,
+                    dlq_reason: None,
+                    dlq_step: None,
+                    dlq_timestamp: None,
+                    content_encoding: None,
+                    legacy_property_splice: None,
+                },
+            })
+            .collect();
+
+        output.publish_prepared(events).await;
+
+        let (live_producer, idle_producer) = match live {
+            Target::Primary => (&primary, &fallback),
+            Target::Fallback => (&fallback, &primary),
+        };
+        let topics: Vec<String> = live_producer
+            .get_records()
+            .iter()
+            .map(|record| record.topic.to_string())
+            .collect();
+        let expected: Vec<&str> = cases
+            .iter()
+            .map(|case| match live {
+                Target::Primary => case.primary_topic,
+                Target::Fallback => case.fallback_topic,
+            })
+            .collect();
+        assert_eq!(topics, expected);
+        assert!(idle_producer.get_records().is_empty());
     }
 }

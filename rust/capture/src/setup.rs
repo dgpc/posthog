@@ -13,7 +13,7 @@ use common_kafka::config::KafkaConfig as WarningsKafkaConfig;
 use common_kafka::kafka_producer::create_threaded_kafka_producer_no_ping;
 use common_redis::RedisClient;
 use metrics::gauge;
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 
 use crate::ai_event_limits::AI_MAX_EVENT_BYTES_CEILING;
 use crate::ai_event_size_caps::AiEventSizeCaps;
@@ -598,6 +598,12 @@ async fn create_output(
         }
         Some(settings) => {
             anyhow::ensure!(
+                !settings.armed,
+                "{} is armed but {} is not set",
+                fallback::ARMING_VAR,
+                fallback::FALLBACK_BROKERS_VAR,
+            );
+            anyhow::ensure!(
                 settings.check == fallback::CheckMode::Warn,
                 "{}=strict but {} is not set",
                 fallback::CHECK_VAR,
@@ -614,6 +620,13 @@ async fn create_output(
             }
             None
         }
+    };
+    let live = fallback
+        .as_ref()
+        .map_or(Target::Primary, |(settings, _)| settings.live());
+    let live_table = match &fallback {
+        Some((_, secondary)) if live == Target::Fallback => secondary,
+        _ => &outputs,
     };
     for table in [Some(&outputs), fallback.as_ref().map(|(_, s)| s)]
         .into_iter()
@@ -635,7 +648,7 @@ async fn create_output(
     } else {
         sink_handle.clone()
     };
-    let live_producers = outputs.producers();
+    let live_producers = live_table.producers();
     let liveness = producer_configs
         .keys()
         .filter_map(|&name| {
@@ -652,15 +665,29 @@ async fn create_output(
     let producers = ProducerRegistry::build(&producer_configs, liveness)
         .context("failed to start Kafka producers")?;
 
-    if let Some((settings, secondary)) = &fallback {
-        let secondary = secondary.map_producers(|name| producers.get(*name));
-        fallback::run_boot_checks(&secondary, *settings).await?;
-    }
-    let kafka_output = Output::single(KafkaSink::new(
-        outputs.map_producers(|name| producers.get(*name)),
-        config.replay_envelope_compression,
-    ));
-    outputs_layer::record_live_target(Target::Primary);
+    let primary = outputs.map_producers(|name| producers.get(*name));
+    let kafka_output = match fallback {
+        None => Output::single(KafkaSink::new(primary, config.replay_envelope_compression)),
+        Some((settings, secondary)) => {
+            let secondary = secondary.map_producers(|name| producers.get(*name));
+            fallback::run_boot_checks(&primary, &secondary, settings).await?;
+            if settings.armed {
+                error!(
+                    "{} is armed: capture-analytics publishes to the fallback cluster",
+                    fallback::ARMING_VAR
+                );
+            }
+            Output::select(
+                Output::single(KafkaSink::new(primary, config.replay_envelope_compression)),
+                Output::single(KafkaSink::new(
+                    secondary,
+                    config.replay_envelope_compression,
+                )),
+                live,
+            )
+        }
+    };
+    outputs_layer::record_live_target(live);
 
     if !config.s3_fallback_enabled {
         return Ok((kafka_output, Some(producers)));
@@ -1352,10 +1379,11 @@ mod tests {
         .expect("boot must proceed when the completeness check is disabled");
     }
 
-    fn fallback_config(mode: CaptureMode, check: &str) -> Config {
+    fn fallback_config(mode: CaptureMode, arming: &str, check: &str) -> Config {
         let cfg_env: HashMap<String, String> = [
             ("REDIS_URL", "redis://localhost:6379/"),
             ("CAPTURE_MODE", mode.as_tag()),
+            (fallback::ARMING_VAR, arming),
             (fallback::CHECK_VAR, check),
         ]
         .into_iter()
@@ -1364,9 +1392,15 @@ mod tests {
         envconfig::Envconfig::init_from_hashmap(&cfg_env).expect("test config")
     }
 
+    #[rstest::rstest]
+    #[case::armed(fallback::ARMING_VALUE, "")]
+    #[case::strict("", "strict")]
     #[tokio::test]
-    async fn events_refuse_boot_when_the_fallback_is_required_but_unset() {
-        let config = fallback_config(CaptureMode::Events, "strict");
+    async fn events_refuse_boot_when_the_fallback_is_required_but_unset(
+        #[case] arming: &str,
+        #[case] check: &str,
+    ) {
+        let config = fallback_config(CaptureMode::Events, arming, check);
         let default_producers = producers::load_all(&HashMap::new()).expect("default producers");
 
         let err = create_output_registry(
@@ -1391,7 +1425,7 @@ mod tests {
     #[case(CaptureMode::Import)]
     #[tokio::test]
     async fn other_modes_ignore_the_fallback_configuration(#[case] mode: CaptureMode) {
-        let config = fallback_config(mode, "bogus");
+        let config = fallback_config(mode, "not-the-sentinel", "bogus");
         let env: HashMap<String, String> = [(fallback::FALLBACK_BROKERS_VAR, "127.0.0.1:1")]
             .into_iter()
             .map(|(k, v)| (k.to_string(), v.to_string()))
