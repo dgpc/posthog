@@ -99,6 +99,15 @@ class EvalDatabase:
         self._eval_setup = _django_db_setup(self.keepdb, self.blocker)
         next(self._eval_setup)
 
+        from posthog.clickhouse.client.deferred_setup import (
+            clickhouse_test_setup,  # noqa: PLC0415 — must import only after django.setup()
+        )
+
+        # Replicated tables get a unique ZooKeeper path only while settings.TEST is true. The demo data
+        # setup sends the first ClickHouse query under override_settings(TEST=False), so a deferred setup
+        # would create the tables there, on the paths the development database uses.
+        clickhouse_test_setup.run()
+
     def teardown(self) -> None:
         from django.test.utils import teardown_databases  # noqa: PLC0415 — must import only after django.setup()
 
