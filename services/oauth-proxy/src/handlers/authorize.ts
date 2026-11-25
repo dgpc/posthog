@@ -1,4 +1,4 @@
-import { type Region, baseUrlForRegion } from '@/lib/constants'
+import { type Region, baseUrlForRegion, clientCallbackUrl } from '@/lib/constants'
 import {
     type ClientMapping,
     getClientMapping,
@@ -103,11 +103,19 @@ async function redirectToRegionalAuthorize(url: URL, region: Region, kv: KVNames
     }
 
     // Only proxy-registered clients have the proxy callback in their registered redirect_uris.
+    const callbackUrl =
+        mapping?.redirect_uris && regionalClientId ? clientCallbackUrl(url.origin, regionalClientId) : null
     let nonce: string | null = null
-    if (mapping?.redirect_uris && originalRedirectUri) {
+    if (callbackUrl && regionalClientId && originalRedirectUri) {
         // A proxy nonce keys the record so knowing the client's state cannot overwrite it.
         nonce = crypto.randomUUID()
-        kvWrites.push(putPendingCallback(kv, nonce, { redirect_uri: originalRedirectUri, state: state ?? null }))
+        kvWrites.push(
+            putPendingCallback(kv, nonce, {
+                redirect_uri: originalRedirectUri,
+                state: state ?? null,
+                regional_client_id: regionalClientId,
+            })
+        )
         if (clientId) {
             kvWrites.push(putCallbackRedirectUri(kv, clientId, originalRedirectUri))
         }
@@ -119,11 +127,6 @@ async function redirectToRegionalAuthorize(url: URL, region: Region, kv: KVNames
     const regionalBase = baseUrlForRegion(region)
     const regionalUrl = new URL('/oauth/authorize/', regionalBase)
 
-    // Replace redirect_uri with proxy's own callback so the client always
-    // talks back to the proxy (not directly to the regional server).
-    // Only for proxy-registered clients where the proxy callback is a registered URI.
-    const proxyCallbackUrl = `${url.protocol}//${url.host}/oauth/callback/`
-
     // Copy all params except our internal _region param
     for (const [key, value] of url.searchParams.entries()) {
         if (key === '_region') {
@@ -134,8 +137,9 @@ async function redirectToRegionalAuthorize(url: URL, region: Region, kv: KVNames
         }
         if (key === 'client_id' && regionalClientId) {
             regionalUrl.searchParams.set(key, regionalClientId)
-        } else if (key === 'redirect_uri' && mapping?.redirect_uris) {
-            regionalUrl.searchParams.set(key, proxyCallbackUrl)
+        } else if (key === 'redirect_uri' && callbackUrl) {
+            // The client always talks back to the proxy, never directly to the regional server.
+            regionalUrl.searchParams.set(key, callbackUrl)
         } else {
             regionalUrl.searchParams.set(key, value)
         }

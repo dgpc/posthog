@@ -82,7 +82,7 @@ describe('handleAuthorize', () => {
         expect(location.origin).toBe('https://us.posthog.com')
         expect(location.pathname).toBe('/oauth/authorize/')
         expect(location.searchParams.get('client_id')).toBe('us_real_id')
-        expect(location.searchParams.get('redirect_uri')).toBe('https://oauth.posthog.com/oauth/callback/')
+        expect(location.searchParams.get('redirect_uri')).toBe('https://oauth.posthog.com/oauth/callback/us_real_id/')
         expect(location.searchParams.has('_region')).toBe(false)
     })
 
@@ -110,7 +110,7 @@ describe('handleAuthorize', () => {
         expect(location.origin).toBe('https://eu.posthog.com')
         expect(location.pathname).toBe('/oauth/authorize/')
         expect(location.searchParams.get('client_id')).toBe('eu_real_id')
-        expect(location.searchParams.get('redirect_uri')).toBe('https://oauth.posthog.com/oauth/callback/')
+        expect(location.searchParams.get('redirect_uri')).toBe('https://oauth.posthog.com/oauth/callback/eu_real_id/')
         expect(location.searchParams.has('_region')).toBe(false)
     })
 
@@ -180,6 +180,7 @@ describe('handleAuthorize', () => {
         expect(JSON.parse(pendingByNonce![1] as string)).toEqual({
             redirect_uri: 'http://localhost:3000/callback',
             state: 'abc123',
+            regional_client_id: 'eu_id',
         })
 
         const stateHash = await hashKey('abc123')

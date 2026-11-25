@@ -1397,6 +1397,12 @@ ID_JAG_ALLOWED_AUDIENCES: list[str] = get_list(get_from_env("ID_JAG_ALLOWED_AUDI
 # e.g. "https://mcp.posthog.com,https://mcp.us.posthog.com" on Cloud. SITE_URL is always accepted.
 ID_JAG_ALLOWED_RESOURCES: list[str] = get_list(get_from_env("ID_JAG_ALLOWED_RESOURCES", ""))
 
+# Callback URLs of services/oauth-proxy. An application that registered one also accepts
+# "<callback><its own client_id>/", from which the proxy learns which client a code was issued to.
+OAUTH_PROXY_CALLBACK_URLS: list[str] = get_list(
+    get_from_env("OAUTH_PROXY_CALLBACK_URLS", "https://oauth.posthog.com/oauth/callback/")
+)
+
 TOOLBAR_OAUTH_STATE_TTL_SECONDS = 60 * 5
 TOOLBAR_OAUTH_EXCHANGE_TIMEOUT_SECONDS = 10
 TOOLBAR_OAUTH_APPLICATION_NAME = "PostHog Toolbar"

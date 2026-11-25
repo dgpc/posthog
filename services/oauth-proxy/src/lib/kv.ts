@@ -62,6 +62,8 @@ export async function getCallbackRedirectUri(kv: KVNamespace, key: string): Prom
 export interface PendingCallback {
     redirect_uri: string
     state: string | null
+    /** The regional client the flow was started for. The callback path has to name the same client. */
+    regional_client_id: string
 }
 
 export async function putPendingCallback(kv: KVNamespace, nonce: string, record: PendingCallback): Promise<void> {
