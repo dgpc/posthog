@@ -835,6 +835,38 @@ export async function buildParityScenarios(): Promise<ParityScenario[]> {
             ],
         ]
         scenarios.push(finish(traces))
+
+        const required = baseScenario(
+            'require-secret-key',
+            'A require_secret_key rule drops unsigned public-token messages at admission and bills none of them.',
+            {
+                LOGS_SAMPLING_ENABLED_TEAMS: '*',
+                LOGS_BILLING_PRORATE_ENABLED: true,
+                LOGS_INTERNAL_INGESTION_SIGNING_KEYS: SIGNING_KEY,
+                LOGS_INTERNAL_INGESTION_ENABLED_TEAMS: '101',
+            }
+        )
+        required.secret_key_teams = { sha256$parity_plain: 101 }
+        required.internal_source_policies = { rules_src: { billed: true, teamRules: true } }
+        required.sampling_rules = {
+            101: [
+                pathRule('path-healthz', { patterns: ['/healthz'] }),
+                { ...pathRule('require-key', {}), rule_type: 'require_secret_key' },
+            ],
+        }
+        const signed = signInternalLogs(SIGNING_KEY, 'rules_src', 101, new Date(NOW_MS - 2000))
+        required.batches = [
+            [
+                await f.logs('sha256$parity_plain', 2),
+                await f.logs(plain, 3),
+                await f.logs(plain, 2, { headers: { 'auth-type': 'secret_key' } }),
+                await f.logs(plain, 2, {
+                    headers: { [INTERNAL_LOGS_HEADER]: signed, created_at: new Date(NOW_MS - 1000).toISOString() },
+                }),
+                await f.logs(json, 2),
+            ],
+        ]
+        scenarios.push(finish(required))
     }
     {
         const rng = new Rng(11)

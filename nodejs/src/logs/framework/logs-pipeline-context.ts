@@ -122,6 +122,10 @@ export type LogsPipelineContext = {
     defaultRetentionDays: (teamId: number, logsSettings: LogsSettings) => Promise<number>
 }
 
+export function isSamplingEvalEnabledForTeam(context: LogsPipelineContext, teamId: number): boolean {
+    return !context.gates.samplingKillswitch && teamIdMatchesCsv(context.gates.samplingEnabledTeams, teamId)
+}
+
 /** Transformations write hog_function logs, which could come back here as internal logs and loop. */
 export function appliesTeamLogRules(message: LogsIngestionMessage): boolean {
     return message.verifiedAsInternalLogs?.teamRules ?? true
