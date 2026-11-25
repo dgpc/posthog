@@ -8,6 +8,7 @@ from products.messaging.backend.models.message_preferences import MessageRecipie
 from products.messaging.backend.provider_imports.runs import close_stale_runs
 from products.messaging.backend.services.code_email_source import RETRIED_OUTCOMES, detect_code_email_source
 from products.messaging.backend.services.customerio_sync_service import sync_preferences_to_customerio
+from products.messaging.backend.services.erasure import delete_expired_erasures
 
 
 @shared_task(ignore_result=True, name="products.messaging.backend.tasks.sync_preferences_to_customerio_task")
@@ -42,3 +43,10 @@ def detect_code_email_source_task(team_id: int, key_id: str, attempt: int = 1) -
 def close_stale_provider_import_runs() -> None:
     """End import runs whose workflow is gone, so a vendor key never outlives its run."""
     close_stale_runs()
+
+
+@shared_task(ignore_result=True, name="products.messaging.backend.tasks.delete_expired_recipient_erasures")
+@skip_team_scope_audit  # One sweep deletes the expired records of every team
+def delete_expired_recipient_erasures() -> None:
+    """Delete erasure records once every preference link they revoke has expired, so the address hashes go too."""
+    delete_expired_erasures()
